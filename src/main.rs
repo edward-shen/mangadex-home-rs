@@ -1,4 +1,5 @@
 #![warn(clippy::pedantic, clippy::nursery)]
+#![allow(clippy::future_not_send)] // We're end users, so this is ok
 
 use std::env::{self, VarError};
 use std::time::Duration;
@@ -12,7 +13,7 @@ use awc::{error::SendRequestError, Client};
 use log::{debug, error, info, warn};
 use lru::LruCache;
 use parking_lot::RwLock;
-use ping::{PingRequest, PingResponse};
+use ping::{Request, Response};
 use rustls::sign::{CertifiedKey, RSASigningKey};
 use rustls::PrivateKey;
 use rustls::{Certificate, NoClientAuth, ResolvesServerCert, ServerConfig};
@@ -40,24 +41,32 @@ struct ServerState {
     tls_config: Tls,
     disabled_tokens: bool,
     url: String,
-    cache: LruCache<(String, String, bool), Vec<u8>>,
+    cache: LruCache<(String, String, bool), CachedImage>,
+}
+
+struct CachedImage {
+    data: Vec<u8>,
+    content_type: Option<Vec<u8>>,
+    content_length: Option<Vec<u8>>,
+    last_modified: Option<Vec<u8>>,
 }
 
 impl ServerState {
     async fn init(config: &Config) -> Result<Self, ()> {
         let resp = Client::new()
             .post(CONTROL_CENTER_PING_URL)
-            .send_json(&PingRequest::from(config))
+            .send_json(&Request::from(config))
             .await;
 
         match resp {
-            Ok(mut resp) => match resp.json::<PingResponse>().await {
+            Ok(mut resp) => match resp.json::<Response>().await {
                 Ok(resp) => {
                     let key = resp
                         .token_key
-                        .and_then(|key| match PrecomputedKey::from_slice(key.as_bytes()) {
-                            Some(key) => Some(key),
-                            None => {
+                        .and_then(|key| {
+                            if let Some(key) = PrecomputedKey::from_slice(key.as_bytes()) {
+                                Some(key)
+                            } else {
                                 error!("Failed to parse token key: got {}", key);
                                 None
                             }
@@ -106,7 +115,7 @@ impl ServerState {
     }
 }
 
-struct RwLockServerState(RwLock<ServerState>);
+pub struct RwLockServerState(RwLock<ServerState>);
 
 impl ResolvesServerCert for RwLockServerState {
     fn resolve(&self, _: rustls::ClientHello) -> Option<CertifiedKey> {
@@ -166,7 +175,7 @@ async fn main() -> Result<(), std::io::Error> {
     .await
 }
 
-struct Config {
+pub struct Config {
     secret: String,
     port: u16,
     disk_quota: usize,

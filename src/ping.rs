@@ -9,7 +9,7 @@ use url::Url;
 use crate::{client_api_version, Config, RwLockServerState, CONTROL_CENTER_PING_URL};
 
 #[derive(Serialize)]
-pub struct PingRequest<'a> {
+pub struct Request<'a> {
     secret: &'a str,
     port: u16,
     disk_space: usize,
@@ -18,7 +18,7 @@ pub struct PingRequest<'a> {
     tls_created_at: Option<String>,
 }
 
-impl<'a> PingRequest<'a> {
+impl<'a> Request<'a> {
     fn from_config_and_state(config: &'a Config, state: &'a Arc<RwLockServerState>) -> Self {
         Self {
             secret: &config.secret,
@@ -31,7 +31,7 @@ impl<'a> PingRequest<'a> {
     }
 }
 
-impl<'a> From<&'a Config> for PingRequest<'a> {
+impl<'a> From<&'a Config> for Request<'a> {
     fn from(config: &'a Config) -> Self {
         Self {
             secret: &config.secret,
@@ -45,32 +45,32 @@ impl<'a> From<&'a Config> for PingRequest<'a> {
 }
 
 #[derive(Deserialize)]
-pub(crate) struct PingResponse {
-    pub(crate) image_server: Url,
-    pub(crate) latest_build: usize,
-    pub(crate) url: String,
-    pub(crate) token_key: Option<String>,
-    pub(crate) compromised: bool,
-    pub(crate) paused: bool,
-    pub(crate) disabled_tokens: bool,
-    pub(crate) tls: Option<Tls>,
+pub struct Response {
+    pub image_server: Url,
+    pub latest_build: usize,
+    pub url: String,
+    pub token_key: Option<String>,
+    pub compromised: bool,
+    pub paused: bool,
+    pub disabled_tokens: bool,
+    pub tls: Option<Tls>,
 }
 
 #[derive(Deserialize)]
-pub(crate) struct Tls {
+pub struct Tls {
     pub created_at: String,
     pub private_key: Vec<u8>,
     pub certificate: Vec<u8>,
 }
 
-pub(crate) async fn update_server_state(req: &Config, data: &mut Arc<RwLockServerState>) {
-    let req = PingRequest::from_config_and_state(req, data);
+pub async fn update_server_state(req: &Config, data: &mut Arc<RwLockServerState>) {
+    let req = Request::from_config_and_state(req, data);
     let resp = Client::new()
         .post(CONTROL_CENTER_PING_URL)
         .send_json(&req)
         .await;
     match resp {
-        Ok(mut resp) => match resp.json::<PingResponse>().await {
+        Ok(mut resp) => match resp.json::<Response>().await {
             Ok(resp) => {
                 let mut write_guard = data.0.write();
 

@@ -1,7 +1,12 @@
 use std::convert::Infallible;
 
-use actix_web::{dev::HttpResponseBuilder, get, web::Data, HttpRequest, Responder};
-use actix_web::{web::Path, HttpResponse};
+use actix_web::dev::HttpResponseBuilder;
+use actix_web::http::header::{
+    ACCESS_CONTROL_ALLOW_ORIGIN, ACCESS_CONTROL_EXPOSE_HEADERS, CACHE_CONTROL, CONTENT_LENGTH,
+    CONTENT_TYPE, LAST_MODIFIED, X_CONTENT_TYPE_OPTIONS,
+};
+use actix_web::web::Path;
+use actix_web::{get, web::Data, HttpRequest, HttpResponse, Responder};
 use awc::Client;
 use base64::DecodeError;
 use bytes::Bytes;
@@ -12,7 +17,7 @@ use serde::Deserialize;
 use sodiumoxide::crypto::box_::{open_precomputed, Nonce, PrecomputedKey, NONCEBYTES};
 use thiserror::Error;
 
-use crate::{client_api_version, RwLockServerState};
+use crate::{client_api_version, CachedImage, RwLockServerState};
 
 const BASE64_CONFIG: base64::Config = base64::Config::new(base64::CharacterSet::UrlSafe, false);
 
@@ -33,8 +38,8 @@ enum ServerResponse {
 impl Responder for ServerResponse {
     fn respond_to(self, req: &HttpRequest) -> HttpResponse {
         match self {
-            ServerResponse::TokenValidationError(e) => e.respond_to(req),
-            ServerResponse::HttpResponse(resp) => resp.respond_to(req),
+            Self::TokenValidationError(e) => e.respond_to(req),
+            Self::HttpResponse(resp) => resp.respond_to(req),
         }
     }
 }
@@ -115,6 +120,12 @@ fn validate_token(
     token: String,
     chapter_hash: &str,
 ) -> Result<(), TokenValidationError> {
+    #[derive(Deserialize)]
+    struct Token<'a> {
+        expires: DateTime<Utc>,
+        hash: &'a str,
+    }
+
     let data = base64::decode_config(token, BASE64_CONFIG)?;
     if data.len() < NONCEBYTES {
         return Err(TokenValidationError::IncompleteNonce);
@@ -123,12 +134,6 @@ fn validate_token(
     let nonce = Nonce::from_slice(&data[..NONCEBYTES]).ok_or(TokenValidationError::InvalidNonce)?;
     let decrypted = open_precomputed(&data[NONCEBYTES..], &nonce, precomputed_key)
         .map_err(|_| TokenValidationError::DecryptionFailure)?;
-
-    #[derive(Deserialize)]
-    struct Token<'a> {
-        expires: DateTime<Utc>,
-        hash: &'a str,
-    }
 
     let parsed_token: Token =
         serde_json::from_slice(&decrypted).map_err(|_| TokenValidationError::InvalidToken)?;
@@ -146,10 +151,10 @@ fn validate_token(
 
 fn push_headers(builder: &mut HttpResponseBuilder) -> &mut HttpResponseBuilder {
     builder
-        .insert_header(("X-Content-Type-Options", "nosniff"))
-        .insert_header(("Access-Control-Allow-Origin", "https://mangadex.org"))
-        .insert_header(("Access-Control-Expose-Headers", "*"))
-        .insert_header(("Cache-Control", "public, max-age=1209600"))
+        .insert_header((X_CONTENT_TYPE_OPTIONS, "nosniff"))
+        .insert_header((ACCESS_CONTROL_ALLOW_ORIGIN, "https://mangadex.org"))
+        .insert_header((ACCESS_CONTROL_EXPOSE_HEADERS, "*"))
+        .insert_header((CACHE_CONTROL, "public, max-age=1209600"))
         .insert_header(("Timing-Allow-Origin", "https://mangadex.org"))
         .insert_header(("Server", SERVER_ID_STRING))
 }
@@ -163,12 +168,7 @@ async fn fetch_image(
     let key = (chapter_hash, file_name, is_data_saver);
 
     if let Some(cached) = state.0.write().cache.get(&key) {
-        let data = cached.to_vec();
-        let data: Vec<Result<Bytes, Infallible>> = data
-            .chunks(1024)
-            .map(|v| Ok(Bytes::from(v.to_vec())))
-            .collect();
-        return ServerResponse::HttpResponse(HttpResponse::Ok().streaming(stream::iter(data)));
+        return construct_response(cached);
     }
 
     let mut state = state.0.write();
@@ -184,25 +184,61 @@ async fn fetch_image(
     .await;
 
     match resp {
-        Ok(mut resp) => match resp.body().await {
-            Ok(bytes) => {
-                state.cache.put(key, bytes.to_vec());
-                let bytes: Vec<Result<Bytes, Infallible>> = bytes
-                    .chunks(1024)
-                    .map(|v| Ok(Bytes::from(v.to_vec())))
-                    .collect();
-                return ServerResponse::HttpResponse(
-                    HttpResponse::Ok().streaming(stream::iter(bytes)),
-                );
+        Ok(mut resp) => {
+            let headers = resp.headers();
+            let content_type = headers.get(CONTENT_TYPE).map(AsRef::as_ref).map(Vec::from);
+            let content_length = headers
+                .get(CONTENT_LENGTH)
+                .map(AsRef::as_ref)
+                .map(Vec::from);
+            let last_modified = headers.get(LAST_MODIFIED).map(AsRef::as_ref).map(Vec::from);
+            let body = resp.body().await;
+            match body {
+                Ok(bytes) => {
+                    let cached = CachedImage {
+                        data: bytes.to_vec(),
+                        content_type,
+                        content_length,
+                        last_modified,
+                    };
+                    let resp = construct_response(&cached);
+                    state.cache.put(key, cached);
+                    return resp;
+                }
+                Err(e) => {
+                    warn!("Got payload error from image server: {}", e);
+                    ServerResponse::HttpResponse(
+                        push_headers(&mut HttpResponse::ServiceUnavailable()).finish(),
+                    )
+                }
             }
-            Err(e) => {
-                warn!("Got payload error from image server: {}", e);
-                todo!()
-            }
-        },
+        }
         Err(e) => {
             error!("Failed to fetch image from server: {}", e);
-            todo!()
+            ServerResponse::HttpResponse(
+                push_headers(&mut HttpResponse::ServiceUnavailable()).finish(),
+            )
         }
     }
+}
+
+fn construct_response(cached: &CachedImage) -> ServerResponse {
+    let data: Vec<Result<Bytes, Infallible>> = cached
+        .data
+        .to_vec()
+        .chunks(1024)
+        .map(|v| Ok(Bytes::from(v.to_vec())))
+        .collect();
+    let mut resp = HttpResponse::Ok();
+    if let Some(content_type) = &cached.content_type {
+        resp.append_header((CONTENT_TYPE, &**content_type));
+    }
+    if let Some(content_length) = &cached.content_length {
+        resp.append_header((CONTENT_LENGTH, &**content_length));
+    }
+    if let Some(last_modified) = &cached.last_modified {
+        resp.append_header((LAST_MODIFIED, &**last_modified));
+    }
+
+    return ServerResponse::HttpResponse(push_headers(&mut resp).streaming(stream::iter(data)));
 }
