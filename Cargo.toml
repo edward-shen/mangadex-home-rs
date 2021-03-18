@@ -1,0 +1,25 @@
+[package]
+name = "mangadex-home-rs"
+version = "0.1.0"
+authors = ["Edward Shen <code@eddie.sh>"]
+edition = "2018"
+
+
+[dependencies]
+actix-web = { version = "4.0.0-beta.4", features = [ "rustls" ] }
+awc = "3.0.0-beta.3"
+parking_lot = "0.11"
+base64 = "0.13"
+sodiumoxide = "0.2"
+thiserror = "1"
+chrono = { version = "0.4", features = [ "serde" ] }
+serde = "1"
+serde_json = "1"
+url = { version = "2", features = [ "serde" ] }
+dotenv = "0.15"
+log = "0.4"
+rustls = "0.19"
+simple_logger = "1"
+lru = "0.6"
+futures = "0.3"
+bytes = "1"
