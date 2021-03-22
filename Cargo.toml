@@ -1,5 +1,5 @@
 [package]
-name = "mangadex-home-rs"
+name = "mangadex-home"
 version = "0.1.0"
 license = "MIT OR Apache-2.0"
 authors = ["Edward Shen <code@eddie.sh>"]
