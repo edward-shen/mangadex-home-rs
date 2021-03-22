@@ -7,19 +7,20 @@ use actix_web::http::header::{
 };
 use actix_web::web::Path;
 use actix_web::{get, web::Data, HttpRequest, HttpResponse, Responder};
-use awc::Client;
 use base64::DecodeError;
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use futures::stream;
-use log::{error, warn};
+use log::{error, info, warn};
 use serde::Deserialize;
 use sodiumoxide::crypto::box_::{open_precomputed, Nonce, PrecomputedKey, NONCEBYTES};
 use thiserror::Error;
 
-use crate::{client_api_version, CachedImage, RwLockServerState};
+use crate::cache::{CacheKey, CachedImage};
+use crate::client_api_version;
+use crate::state::RwLockServerState;
 
-const BASE64_CONFIG: base64::Config = base64::Config::new(base64::CharacterSet::UrlSafe, false);
+pub const BASE64_CONFIG: base64::Config = base64::Config::new(base64::CharacterSet::UrlSafe, false);
 
 const SERVER_ID_STRING: &str = concat!(
     env!("CARGO_CRATE_NAME"),
@@ -50,7 +51,7 @@ async fn token_data(
     path: Path<(String, String, String)>,
 ) -> impl Responder {
     let (token, chapter_hash, file_name) = path.into_inner();
-    if !state.0.read().disabled_tokens {
+    if state.0.read().force_tokens {
         if let Err(e) = validate_token(&state.0.read().precomputed_key, token, &chapter_hash) {
             return ServerResponse::TokenValidationError(e);
         }
@@ -65,7 +66,7 @@ async fn token_data_saver(
     path: Path<(String, String, String)>,
 ) -> impl Responder {
     let (token, chapter_hash, file_name) = path.into_inner();
-    if !state.0.read().disabled_tokens {
+    if state.0.read().force_tokens {
         if let Err(e) = validate_token(&state.0.read().precomputed_key, token, &chapter_hash) {
             return ServerResponse::TokenValidationError(e);
         }
@@ -89,6 +90,24 @@ async fn no_token_data_saver(
 ) -> impl Responder {
     let (chapter_hash, file_name) = path.into_inner();
     fetch_image(state, chapter_hash, file_name, true).await
+}
+
+pub async fn default(state: Data<RwLockServerState>, req: HttpRequest) -> impl Responder {
+    let path = &format!(
+        "{}{}",
+        state.0.read().image_server,
+        req.path().chars().skip(1).collect::<String>()
+    );
+    info!("Got unknown path, just proxying: {}", path);
+    let resp = reqwest::get(path).await.unwrap();
+    let content_type = resp.headers().get(CONTENT_TYPE);
+    let mut resp_builder = HttpResponseBuilder::new(resp.status());
+    if let Some(content_type) = content_type {
+        resp_builder.insert_header((CONTENT_TYPE, content_type));
+    }
+    push_headers(&mut resp_builder);
+
+    ServerResponse::HttpResponse(resp_builder.body(resp.bytes().await.unwrap_or_default()))
 }
 
 #[derive(Error, Debug)]
@@ -165,26 +184,46 @@ async fn fetch_image(
     file_name: String,
     is_data_saver: bool,
 ) -> ServerResponse {
-    let key = (chapter_hash, file_name, is_data_saver);
+    let key = CacheKey(chapter_hash, file_name, is_data_saver);
 
-    if let Some(cached) = state.0.write().cache.get(&key) {
+    if let Some(cached) = state.0.write().cache.get(&key).await {
         return construct_response(cached);
     }
 
     let mut state = state.0.write();
     let resp = if is_data_saver {
-        Client::new().get(format!(
+        reqwest::get(format!(
             "{}/data-saver/{}/{}",
             state.image_server, &key.1, &key.2
         ))
     } else {
-        Client::new().get(format!("{}/data/{}/{}", state.image_server, &key.1, &key.2))
+        reqwest::get(format!("{}/data/{}/{}", state.image_server, &key.1, &key.2))
     }
-    .send()
     .await;
 
     match resp {
-        Ok(mut resp) => {
+        Ok(resp) => {
+            let content_type = resp.headers().get(CONTENT_TYPE);
+
+            let is_image = content_type
+                .map(|v| String::from_utf8_lossy(v.as_ref()).contains("image/"))
+                .unwrap_or_default();
+            if resp.status() != 200 || !is_image {
+                warn!(
+                    "Got non-OK or non-image response code from upstream, proxying and not caching result.",
+                );
+
+                let mut resp_builder = HttpResponseBuilder::new(resp.status());
+                if let Some(content_type) = content_type {
+                    resp_builder.insert_header((CONTENT_TYPE, content_type));
+                }
+                push_headers(&mut resp_builder);
+
+                return ServerResponse::HttpResponse(
+                    resp_builder.body(resp.bytes().await.unwrap_or_default()),
+                );
+            }
+
             let headers = resp.headers();
             let content_type = headers.get(CONTENT_TYPE).map(AsRef::as_ref).map(Vec::from);
             let content_length = headers
@@ -192,7 +231,7 @@ async fn fetch_image(
                 .map(AsRef::as_ref)
                 .map(Vec::from);
             let last_modified = headers.get(LAST_MODIFIED).map(AsRef::as_ref).map(Vec::from);
-            let body = resp.body().await;
+            let body = resp.bytes().await;
             match body {
                 Ok(bytes) => {
                     let cached = CachedImage {
@@ -202,7 +241,7 @@ async fn fetch_image(
                         last_modified,
                     };
                     let resp = construct_response(&cached);
-                    state.cache.put(key, cached);
+                    state.cache.put(key, cached).await;
                     return resp;
                 }
                 Err(e) => {

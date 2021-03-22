@@ -1,14 +1,16 @@
 use std::sync::Arc;
 
-use awc::{error::SendRequestError, Client};
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use sodiumoxide::crypto::box_::PrecomputedKey;
 use url::Url;
 
-use crate::{client_api_version, Config, RwLockServerState, CONTROL_CENTER_PING_URL};
+use crate::state::RwLockServerState;
+use crate::{client_api_version, Config};
 
-#[derive(Serialize)]
+pub const CONTROL_CENTER_PING_URL: &str = "https://api.mangadex.network/ping";
+
+#[derive(Serialize, Debug)]
 pub struct Request<'a> {
     secret: &'a str,
     port: u16,
@@ -44,7 +46,7 @@ impl<'a> From<&'a Config> for Request<'a> {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub struct Response {
     pub image_server: Url,
     pub latest_build: usize,
@@ -52,38 +54,40 @@ pub struct Response {
     pub token_key: Option<String>,
     pub compromised: bool,
     pub paused: bool,
-    pub disabled_tokens: bool,
+    pub force_tokens: bool,
     pub tls: Option<Tls>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub struct Tls {
     pub created_at: String,
-    pub private_key: Vec<u8>,
-    pub certificate: Vec<u8>,
+    pub private_key: String,
+    pub certificate: String,
 }
 
 pub async fn update_server_state(req: &Config, data: &mut Arc<RwLockServerState>) {
     let req = Request::from_config_and_state(req, data);
-    let resp = Client::new()
-        .post(CONTROL_CENTER_PING_URL)
-        .send_json(&req)
-        .await;
+    let client = reqwest::Client::new();
+    let resp = client.post(CONTROL_CENTER_PING_URL).json(&req).send().await;
     match resp {
-        Ok(mut resp) => match resp.json::<Response>().await {
+        Ok(resp) => match resp.json::<Response>().await {
             Ok(resp) => {
                 let mut write_guard = data.0.write();
 
                 write_guard.image_server = resp.image_server;
 
                 if let Some(key) = resp.token_key {
-                    match PrecomputedKey::from_slice(key.as_bytes()) {
-                        Some(key) => write_guard.precomputed_key = key,
-                        None => error!("Failed to parse token key: got {}", key),
+                    if let Some(key) = base64::decode(&key)
+                        .ok()
+                        .and_then(|k| PrecomputedKey::from_slice(&k))
+                    {
+                        write_guard.precomputed_key = key;
+                    } else {
+                        error!("Failed to parse token key: got {}", key);
                     }
                 }
 
-                write_guard.disabled_tokens = resp.disabled_tokens;
+                write_guard.force_tokens = resp.force_tokens;
 
                 if let Some(tls) = resp.tls {
                     write_guard.tls_config = tls;
@@ -104,7 +108,7 @@ pub async fn update_server_state(req: &Config, data: &mut Arc<RwLockServerState>
             Err(e) => warn!("Got malformed response: {}", e),
         },
         Err(e) => match e {
-            SendRequestError::Timeout => {
+            e if e.is_timeout() => {
                 error!("Response timed out to control server. Is MangaDex down?")
             }
             e => warn!("Failed to send request: {}", e),
