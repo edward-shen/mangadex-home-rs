@@ -55,6 +55,7 @@ pub struct Response {
     pub token_key: Option<String>,
     pub compromised: bool,
     pub paused: bool,
+    #[serde(default)]
     pub force_tokens: bool,
     pub tls: Option<Tls>,
 }

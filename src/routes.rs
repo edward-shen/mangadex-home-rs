@@ -28,7 +28,7 @@ const SERVER_ID_STRING: &str = concat!(
     env!("CARGO_PKG_VERSION"),
     " (",
     client_api_version!(),
-    ")",
+    ") - Conforming to spec revision b82043289",
 );
 
 enum ServerResponse {
@@ -71,24 +71,6 @@ async fn token_data_saver(
             return ServerResponse::TokenValidationError(e);
         }
     }
-    fetch_image(state, chapter_hash, file_name, true).await
-}
-
-#[get("/data/{chapter_hash}/{file_name}")]
-async fn no_token_data(
-    state: Data<RwLockServerState>,
-    path: Path<(String, String)>,
-) -> impl Responder {
-    let (chapter_hash, file_name) = path.into_inner();
-    fetch_image(state, chapter_hash, file_name, false).await
-}
-
-#[get("/data-saver/{chapter_hash}/{file_name}")]
-async fn no_token_data_saver(
-    state: Data<RwLockServerState>,
-    path: Path<(String, String)>,
-) -> impl Responder {
-    let (chapter_hash, file_name) = path.into_inner();
     fetch_image(state, chapter_hash, file_name, true).await
 }
 

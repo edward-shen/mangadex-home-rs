@@ -10,8 +10,7 @@ use std::time::Duration;
 use std::{num::ParseIntError, sync::atomic::Ordering};
 
 use actix_web::rt::{spawn, time, System};
-use actix_web::web;
-use actix_web::web::Data;
+use actix_web::web::{self, Data};
 use actix_web::{App, HttpServer};
 use log::{error, warn, LevelFilter};
 use parking_lot::RwLock;
@@ -85,9 +84,7 @@ async fn main() -> Result<(), std::io::Error> {
     HttpServer::new(move || {
         App::new()
             .service(routes::token_data)
-            .service(routes::no_token_data)
             .service(routes::token_data_saver)
-            .service(routes::no_token_data_saver)
             .route("{tail:.*}", web::get().to(routes::default))
             .app_data(Data::from(Arc::clone(&data_1)))
     })
