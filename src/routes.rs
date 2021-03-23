@@ -250,7 +250,7 @@ fn construct_response(cached: &CachedImage) -> ServerResponse {
     let data: Vec<Result<Bytes, Infallible>> = cached
         .data
         .to_vec()
-        .chunks(1024)
+        .chunks(1460) // TCP MSS default size
         .map(|v| Ok(Bytes::from(v.to_vec())))
         .collect();
     let mut resp = HttpResponse::Ok();
