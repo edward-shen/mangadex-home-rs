@@ -19,7 +19,7 @@ pub async fn send_stop(secret: &str) {
     {
         Ok(resp) => {
             if resp.status() == 200 {
-                info!("Successfully sent stop message.");
+                info!("Successfully sent stop message to control center.");
             } else {
                 warn!("Got weird response from server: {:?}", resp.headers());
             }

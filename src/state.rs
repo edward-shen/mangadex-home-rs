@@ -3,7 +3,7 @@ use std::{io::BufReader, sync::Arc};
 use crate::cache::Cache;
 use crate::ping::{Request, Response, Tls, CONTROL_CENTER_PING_URL};
 use crate::Config;
-use log::{debug, error, info, warn};
+use log::{error, info, warn};
 use parking_lot::RwLock;
 use rustls::internal::pemfile::{certs, rsa_private_keys};
 use rustls::sign::{CertifiedKey, RSASigningKey};
@@ -18,6 +18,11 @@ pub struct ServerState {
     pub force_tokens: bool,
     pub url: String,
     pub cache: Cache,
+    pub log_state: LogState,
+}
+
+pub struct LogState {
+    pub was_paused_before: bool,
 }
 
 impl ServerState {
@@ -47,17 +52,19 @@ impl ServerState {
                         .unwrap();
 
                     if resp.compromised {
-                        warn!("Got compromised response from control center!");
+                        error!("Got compromised response from control center!");
                     }
 
                     if resp.paused {
-                        debug!("Got paused response from control center.");
+                        warn!("Control center has paused this node!");
                     }
 
                     info!("This client's URL has been set to {}", resp.url);
 
                     if resp.force_tokens {
-                        info!("This client will validate tokens");
+                        info!("This client will validate tokens.");
+                    } else {
+                        info!("This client will not validate tokens.");
                     }
 
                     Ok(Self {
@@ -71,6 +78,9 @@ impl ServerState {
                             config.disk_quota,
                             config.disk_path.clone(),
                         ),
+                        log_state: LogState {
+                            was_paused_before: resp.paused,
+                        },
                     })
                 }
                 Err(e) => {

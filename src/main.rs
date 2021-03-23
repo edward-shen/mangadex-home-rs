@@ -12,7 +12,7 @@ use std::{num::ParseIntError, sync::atomic::Ordering};
 use actix_web::rt::{spawn, time, System};
 use actix_web::web::{self, Data};
 use actix_web::{App, HttpServer};
-use log::{error, warn, LevelFilter};
+use log::{debug, error, warn, LevelFilter};
 use parking_lot::RwLock;
 use rustls::{NoClientAuth, ServerConfig};
 use simple_logger::SimpleLogger;
@@ -74,6 +74,7 @@ async fn main() -> Result<(), std::io::Error> {
         let mut data = Arc::clone(&data_0);
         loop {
             interval.tick().await;
+            debug!("Sending ping!");
             ping::update_server_state(&config, &mut data).await;
         }
     });

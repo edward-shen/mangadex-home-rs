@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use log::{debug, error, info, warn};
+use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
 use sodiumoxide::crypto::box_::PrecomputedKey;
 use url::Url;
@@ -89,18 +89,30 @@ pub async fn update_server_state(req: &Config, data: &mut Arc<RwLockServerState>
                     }
                 }
 
-                write_guard.force_tokens = resp.force_tokens;
+                if write_guard.force_tokens != resp.force_tokens {
+                    write_guard.force_tokens = resp.force_tokens;
+                    if resp.force_tokens {
+                        info!("Client received command to enforce token validity.");
+                    } else {
+                        info!("Client received command to no longer enforce token validity");
+                    }
+                }
 
                 if let Some(tls) = resp.tls {
                     write_guard.tls_config = tls;
                 }
 
                 if resp.compromised {
-                    warn!("Got compromised response from control center!");
+                    error!("Got compromised response from control center!");
                 }
 
-                if resp.paused {
-                    debug!("Got paused response from control center.");
+                if resp.paused != write_guard.log_state.was_paused_before {
+                    write_guard.log_state.was_paused_before = resp.paused;
+                    if resp.paused {
+                        warn!("Control center has paused this node.");
+                    } else {
+                        info!("Control center is no longer pausing this node.");
+                    }
                 }
 
                 if resp.url != write_guard.url {
