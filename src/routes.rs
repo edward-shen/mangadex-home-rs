@@ -37,6 +37,7 @@ enum ServerResponse {
 }
 
 impl Responder for ServerResponse {
+    #[inline]
     fn respond_to(self, req: &HttpRequest) -> HttpResponse {
         match self {
             Self::TokenValidationError(e) => e.respond_to(req),
@@ -111,6 +112,7 @@ enum TokenValidationError {
 }
 
 impl Responder for TokenValidationError {
+    #[inline]
     fn respond_to(self, _: &HttpRequest) -> HttpResponse {
         push_headers(&mut HttpResponse::Forbidden()).finish()
     }
@@ -150,6 +152,7 @@ fn validate_token(
     Ok(())
 }
 
+#[inline]
 fn push_headers(builder: &mut HttpResponseBuilder) -> &mut HttpResponseBuilder {
     builder
         .insert_header((X_CONTENT_TYPE_OPTIONS, "nosniff"))

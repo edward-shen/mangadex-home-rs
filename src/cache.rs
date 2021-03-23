@@ -28,6 +28,7 @@ pub struct CachedImage {
 }
 
 impl CachedImage {
+    #[inline]
     fn len(&self) -> usize {
         self.data.capacity()
             + self
@@ -47,6 +48,7 @@ impl CachedImage {
                 .unwrap_or_default()
     }
 
+    #[inline]
     fn shrink_to_fit(&mut self) {
         self.data.shrink_to_fit();
         self.content_length.as_mut().map(Vec::shrink_to_fit);
