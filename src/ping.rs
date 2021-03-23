@@ -33,6 +33,7 @@ impl<'a> Request<'a> {
     }
 }
 
+#[allow(clippy::fallible_impl_from)]
 impl<'a> From<&'a Config> for Request<'a> {
     fn from(config: &'a Config) -> Self {
         Self {

@@ -1,5 +1,6 @@
 #![warn(clippy::pedantic, clippy::nursery)]
-#![allow(clippy::future_not_send)] // We're end users, so this is ok
+// We're end users, so these is ok
+#![allow(clippy::future_not_send, clippy::module_name_repetitions)]
 
 use std::env::{self, VarError};
 use std::path::PathBuf;
@@ -120,7 +121,7 @@ impl Config {
         let memory_quota = env::var("MEM_CACHE_QUOTA_BYTES")?.parse()?;
         let network_speed = env::var("MAX_NETWORK_SPEED")?.parse()?;
         let disk_path = env::var("DISK_CACHE_PATH")
-            .unwrap_or("./cache".to_string())
+            .unwrap_or_else(|_| "./cache".to_string())
             .parse()
             .unwrap();
 
