@@ -1,8 +1,11 @@
-use std::{io::BufReader, sync::Arc};
+use std::{
+    io::BufReader,
+    sync::{atomic::Ordering, Arc},
+};
 
-use crate::cache::Cache;
 use crate::ping::{Request, Response, Tls, CONTROL_CENTER_PING_URL};
-use crate::Config;
+use crate::routes::SEND_SERVER_VERSION;
+use crate::{cache::Cache, config::CliArgs};
 use log::{error, info, warn};
 use parking_lot::RwLock;
 use rustls::internal::pemfile::{certs, rsa_private_keys};
@@ -26,12 +29,14 @@ pub struct LogState {
 }
 
 impl ServerState {
-    pub async fn init(config: &Config) -> Result<Self, ()> {
+    pub async fn init(secret: &str, config: &CliArgs) -> Result<Self, ()> {
         let resp = reqwest::Client::new()
             .post(CONTROL_CENTER_PING_URL)
-            .json(&Request::from(config))
+            .json(&Request::from((secret, config)))
             .send()
             .await;
+
+        SEND_SERVER_VERSION.store(config.enable_server_string, Ordering::Release);
 
         match resp {
             Ok(resp) => match resp.json::<Response>().await {
@@ -74,9 +79,9 @@ impl ServerState {
                         force_tokens: resp.force_tokens,
                         url: resp.url,
                         cache: Cache::new(
-                            config.memory_quota,
+                            config.memory_quota.get(),
                             config.disk_quota,
-                            config.disk_path.clone(),
+                            config.cache_path.clone(),
                         ),
                         log_state: LogState {
                             was_paused_before: resp.paused,

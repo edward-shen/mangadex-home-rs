@@ -1,4 +1,7 @@
-use std::convert::Infallible;
+use std::{
+    convert::Infallible,
+    sync::atomic::{AtomicBool, Ordering},
+};
 
 use actix_web::dev::HttpResponseBuilder;
 use actix_web::http::header::{
@@ -21,6 +24,8 @@ use crate::client_api_version;
 use crate::state::RwLockServerState;
 
 pub const BASE64_CONFIG: base64::Config = base64::Config::new(base64::CharacterSet::UrlSafe, false);
+
+pub static SEND_SERVER_VERSION: AtomicBool = AtomicBool::new(false);
 
 const SERVER_ID_STRING: &str = concat!(
     env!("CARGO_CRATE_NAME"),
@@ -159,8 +164,13 @@ fn push_headers(builder: &mut HttpResponseBuilder) -> &mut HttpResponseBuilder {
         .insert_header((ACCESS_CONTROL_ALLOW_ORIGIN, "https://mangadex.org"))
         .insert_header((ACCESS_CONTROL_EXPOSE_HEADERS, "*"))
         .insert_header((CACHE_CONTROL, "public, max-age=1209600"))
-        .insert_header(("Timing-Allow-Origin", "https://mangadex.org"))
-        .insert_header(("Server", SERVER_ID_STRING))
+        .insert_header(("Timing-Allow-Origin", "https://mangadex.org"));
+
+    if SEND_SERVER_VERSION.load(Ordering::Acquire) {
+        builder.insert_header(("Server", SERVER_ID_STRING));
+    }
+
+    builder
 }
 
 async fn fetch_image(
@@ -176,6 +186,7 @@ async fn fetch_image(
     }
 
     let mut state = state.0.write();
+
     let resp = if is_data_saver {
         reqwest::get(format!(
             "{}/data-saver/{}/{}",
@@ -202,6 +213,7 @@ async fn fetch_image(
                 if let Some(content_type) = content_type {
                     resp_builder.insert_header((CONTENT_TYPE, content_type));
                 }
+
                 push_headers(&mut resp_builder);
 
                 return ServerResponse::HttpResponse(

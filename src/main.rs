@@ -2,16 +2,20 @@
 // We're end users, so these is ok
 #![allow(clippy::future_not_send, clippy::module_name_repetitions)]
 
-use std::env::{self, VarError};
-use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
+use std::{
+    env::{self, VarError},
+    process,
+};
 use std::{num::ParseIntError, sync::atomic::Ordering};
 
 use actix_web::rt::{spawn, time, System};
 use actix_web::web::{self, Data};
 use actix_web::{App, HttpServer};
+use clap::Clap;
+use config::CliArgs;
 use log::{debug, error, warn, LevelFilter};
 use parking_lot::RwLock;
 use rustls::{NoClientAuth, ServerConfig};
@@ -21,6 +25,7 @@ use stop::send_stop;
 use thiserror::Error;
 
 mod cache;
+mod config;
 mod ping;
 mod routes;
 mod state;
@@ -44,18 +49,27 @@ enum ServerError {
 async fn main() -> Result<(), std::io::Error> {
     // It's ok to fail early here, it would imply we have a invalid config.
     dotenv::dotenv().ok();
+    let cli_args = CliArgs::parse();
+
     SimpleLogger::new()
         .with_level(LevelFilter::Info)
         .init()
         .unwrap();
-    let config = Config::new().unwrap();
-    let port = config.port;
-    let server = ServerState::init(&config).await.unwrap();
+    let port = cli_args.port;
+
+    let client_secret = if let Ok(v) = env::var("CLIENT_SECRET") {
+        v
+    } else {
+        eprintln!("Client secret not found in ENV. Please set CLIENT_SECRET.");
+        process::exit(1);
+    };
+    let client_secret_1 = client_secret.clone();
+
+    let server = ServerState::init(&client_secret, &cli_args).await.unwrap();
 
     // Set ctrl+c to send a stop message
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();
-    let client_secret = config.secret.clone();
     ctrlc::set_handler(move || {
         let client_secret = client_secret.clone();
         System::new().block_on(async move {
@@ -75,7 +89,7 @@ async fn main() -> Result<(), std::io::Error> {
         loop {
             interval.tick().await;
             debug!("Sending ping!");
-            ping::update_server_state(&config, &mut data).await;
+            ping::update_server_state(&client_secret_1, &cli_args, &mut data).await;
         }
     });
 
@@ -100,36 +114,4 @@ async fn main() -> Result<(), std::io::Error> {
     }
 
     Ok(())
-}
-
-pub struct Config {
-    secret: String,
-    port: u16,
-    memory_quota: usize,
-    disk_quota: usize,
-    disk_path: PathBuf,
-    network_speed: usize,
-}
-
-impl Config {
-    fn new() -> Result<Self, ServerError> {
-        let secret = env::var("CLIENT_SECRET")?;
-        let port = env::var("PORT")?.parse()?;
-        let disk_quota = env::var("DISK_CACHE_QUOTA_BYTES")?.parse()?;
-        let memory_quota = env::var("MEM_CACHE_QUOTA_BYTES")?.parse()?;
-        let network_speed = env::var("MAX_NETWORK_SPEED")?.parse()?;
-        let disk_path = env::var("DISK_CACHE_PATH")
-            .unwrap_or_else(|_| "./cache".to_string())
-            .parse()
-            .unwrap();
-
-        Ok(Self {
-            secret,
-            port,
-            disk_quota,
-            memory_quota,
-            disk_path,
-            network_speed,
-        })
-    }
 }

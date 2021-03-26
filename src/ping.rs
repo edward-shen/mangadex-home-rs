@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::{
+    num::{NonZeroU16, NonZeroUsize},
+    sync::Arc,
+};
 
 use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
@@ -6,24 +9,28 @@ use sodiumoxide::crypto::box_::PrecomputedKey;
 use url::Url;
 
 use crate::state::RwLockServerState;
-use crate::{client_api_version, Config};
+use crate::{client_api_version, config::CliArgs};
 
 pub const CONTROL_CENTER_PING_URL: &str = "https://api.mangadex.network/ping";
 
 #[derive(Serialize, Debug)]
 pub struct Request<'a> {
     secret: &'a str,
-    port: u16,
+    port: NonZeroU16,
     disk_space: usize,
-    network_speed: usize,
+    network_speed: NonZeroUsize,
     build_version: usize,
     tls_created_at: Option<String>,
 }
 
 impl<'a> Request<'a> {
-    fn from_config_and_state(config: &'a Config, state: &'a Arc<RwLockServerState>) -> Self {
+    fn from_config_and_state(
+        secret: &'a str,
+        config: &CliArgs,
+        state: &Arc<RwLockServerState>,
+    ) -> Self {
         Self {
-            secret: &config.secret,
+            secret,
             port: config.port,
             disk_space: config.disk_quota,
             network_speed: config.network_speed,
@@ -34,10 +41,10 @@ impl<'a> Request<'a> {
 }
 
 #[allow(clippy::fallible_impl_from)]
-impl<'a> From<&'a Config> for Request<'a> {
-    fn from(config: &'a Config) -> Self {
+impl<'a> From<(&'a str, &CliArgs)> for Request<'a> {
+    fn from((secret, config): (&'a str, &CliArgs)) -> Self {
         Self {
-            secret: &config.secret,
+            secret,
             port: config.port,
             disk_space: config.disk_quota,
             network_speed: config.network_speed,
@@ -67,8 +74,8 @@ pub struct Tls {
     pub certificate: String,
 }
 
-pub async fn update_server_state(req: &Config, data: &mut Arc<RwLockServerState>) {
-    let req = Request::from_config_and_state(req, data);
+pub async fn update_server_state(secret: &str, req: &CliArgs, data: &mut Arc<RwLockServerState>) {
+    let req = Request::from_config_and_state(secret, req, data);
     let client = reqwest::Client::new();
     let resp = client.post(CONTROL_CENTER_PING_URL).json(&req).send().await;
     match resp {
