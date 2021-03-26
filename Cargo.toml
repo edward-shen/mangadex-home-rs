@@ -9,18 +9,18 @@ description = "A MangaDex@Home implementation in Rust"
 repository = "https://github.com/edward-shen/mangadex-home-rs"
 
 [dependencies]
-actix-web = { version = "4.0.0-beta.4", features = [ "rustls" ] }
+actix-web = { version = "4.0.0-beta.4", features = ["rustls"] }
 base64 = "0.13"
 bincode = "1"
 bytes = "1"
 cacache = "8"
-chrono = { version = "0.4", features = [ "serde" ] }
-clap = { version = "3.0.0-beta.2", features = [ "wrap_help" ] }
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "3.0.0-beta.2", features = ["wrap_help"] }
 ctrlc = "3"
 dotenv = "0.15"
 futures = "0.3"
 parking_lot = "0.11"
-reqwest = { version = "0.11", features = [ "json" ] }
+reqwest = { version = "0.11", features = ["json"] }
 log = "0.4"
 lru = "0.6"
 rustls = "0.19"
@@ -30,7 +30,7 @@ simple_logger = "1"
 sodiumoxide = "0.2"
 ssri = "5"
 thiserror = "1"
-url = { version = "2", features = [ "serde" ] }
+url = { version = "2", features = ["serde"] }
 
 [profile.release]
 lto = true
