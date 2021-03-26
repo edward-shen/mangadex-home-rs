@@ -12,10 +12,11 @@ use std::{num::ParseIntError, sync::atomic::Ordering};
 use actix_web::rt::{spawn, time, System};
 use actix_web::web::{self, Data};
 use actix_web::{App, HttpServer};
+use cache::Cache;
 use clap::Clap;
 use config::CliArgs;
 use log::{debug, error, warn, LevelFilter};
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use rustls::{NoClientAuth, ServerConfig};
 use simple_logger::SimpleLogger;
 use state::{RwLockServerState, ServerState};
@@ -50,6 +51,9 @@ async fn main() -> Result<(), std::io::Error> {
     dotenv::dotenv().ok();
     let cli_args = CliArgs::parse();
     let port = cli_args.port;
+    let memory_max_size = cli_args.memory_quota.get();
+    let disk_quota = cli_args.disk_quota;
+    let cache_path = cli_args.cache_path.clone();
 
     SimpleLogger::new()
         .with_level(LevelFilter::Info)
@@ -107,6 +111,11 @@ async fn main() -> Result<(), std::io::Error> {
             .service(routes::token_data_saver)
             .route("{tail:.*}", web::get().to(routes::default))
             .app_data(Data::from(Arc::clone(&data_1)))
+            .app_data(Data::new(Mutex::new(Cache::new(
+                memory_max_size,
+                disk_quota,
+                cache_path.clone(),
+            ))))
     })
     .shutdown_timeout(60)
     .bind_rustls(format!("0.0.0.0:{}", port), tls_config)?

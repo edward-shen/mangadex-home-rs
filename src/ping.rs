@@ -1,11 +1,19 @@
-use std::sync::Arc;
+use std::{io::BufReader, sync::Arc};
 use std::{
     num::{NonZeroU16, NonZeroUsize},
     sync::atomic::Ordering,
 };
 
 use log::{error, info, warn};
-use serde::{Deserialize, Serialize};
+use rustls::{
+    internal::pemfile::{certs, rsa_private_keys},
+    sign::RSASigningKey,
+};
+use rustls::{sign::SigningKey, Certificate};
+use serde::{
+    de::{MapAccess, Visitor},
+    Deserialize, Serialize,
+};
 use sodiumoxide::crypto::box_::PrecomputedKey;
 use url::Url;
 
@@ -69,11 +77,72 @@ pub struct Response {
     pub tls: Option<Tls>,
 }
 
-#[derive(Deserialize, Debug)]
 pub struct Tls {
     pub created_at: String,
-    pub private_key: String,
-    pub certificate: String,
+    pub priv_key: Arc<Box<dyn SigningKey>>,
+    pub certs: Vec<Certificate>,
+}
+
+impl<'de> Deserialize<'de> for Tls {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct TlsVisitor;
+
+        impl<'de> Visitor<'de> for TlsVisitor {
+            type Value = Tls;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a tls struct")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut created_at = None;
+                let mut priv_key = None;
+                let mut certificates = None;
+
+                while let Some((key, value)) = map.next_entry::<&str, String>()? {
+                    match key {
+                        "created_at" => created_at = Some(value.to_string()),
+                        "private_key" => {
+                            priv_key = rsa_private_keys(&mut BufReader::new(value.as_bytes()))
+                                .ok()
+                                .and_then(|mut v| {
+                                    v.pop().and_then(|key| RSASigningKey::new(&key).ok())
+                                })
+                        }
+                        "certificate" => {
+                            certificates = certs(&mut BufReader::new(value.as_bytes())).ok()
+                        }
+                        _ => (), // Ignore extra fields
+                    }
+                }
+
+                match (created_at, priv_key, certificates) {
+                    (Some(created_at), Some(priv_key), Some(certificates)) => Ok(Tls {
+                        created_at,
+                        priv_key: Arc::new(Box::new(priv_key)),
+                        certs: certificates,
+                    }),
+                    _ => Err(serde::de::Error::custom("Could not deserialize tls info")),
+                }
+            }
+        }
+
+        deserializer.deserialize_map(TlsVisitor)
+    }
+}
+
+impl std::fmt::Debug for Tls {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Tls")
+            .field("created_at", &self.created_at)
+            .finish()
+    }
 }
 
 pub async fn update_server_state(secret: &str, req: &CliArgs, data: &mut Arc<RwLockServerState>) {

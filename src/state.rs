@@ -1,13 +1,10 @@
-use std::io::BufReader;
 use std::sync::{atomic::Ordering, Arc};
 
-use crate::config::{SEND_SERVER_VERSION, VALIDATE_TOKENS};
+use crate::config::{CliArgs, SEND_SERVER_VERSION, VALIDATE_TOKENS};
 use crate::ping::{Request, Response, Tls, CONTROL_CENTER_PING_URL};
-use crate::{cache::Cache, config::CliArgs};
 use log::{error, info, warn};
 use parking_lot::RwLock;
-use rustls::internal::pemfile::{certs, rsa_private_keys};
-use rustls::sign::{CertifiedKey, RSASigningKey};
+use rustls::sign::CertifiedKey;
 use rustls::ResolvesServerCert;
 use sodiumoxide::crypto::box_::PrecomputedKey;
 use url::Url;
@@ -17,7 +14,6 @@ pub struct ServerState {
     pub image_server: Url,
     pub tls_config: Tls,
     pub url: String,
-    pub cache: Cache,
     pub log_state: LogState,
 }
 
@@ -79,11 +75,6 @@ impl ServerState {
                         image_server: resp.image_server,
                         tls_config: resp.tls.unwrap(),
                         url: resp.url,
-                        cache: Cache::new(
-                            config.memory_quota.get(),
-                            config.disk_quota,
-                            config.cache_path.clone(),
-                        ),
                         log_state: LogState {
                             was_paused_before: resp.paused,
                         },
@@ -113,21 +104,9 @@ pub struct RwLockServerState(pub RwLock<ServerState>);
 impl ResolvesServerCert for RwLockServerState {
     fn resolve(&self, _: rustls::ClientHello) -> Option<CertifiedKey> {
         let read_guard = self.0.read();
-        let priv_key = rsa_private_keys(&mut BufReader::new(
-            read_guard.tls_config.private_key.as_bytes(),
-        ))
-        .ok()?
-        .pop()
-        .unwrap();
-
-        let certs = certs(&mut BufReader::new(
-            read_guard.tls_config.certificate.as_bytes(),
-        ))
-        .ok()?;
-
         Some(CertifiedKey {
-            cert: certs,
-            key: Arc::new(Box::new(RSASigningKey::new(&priv_key).unwrap())),
+            cert: read_guard.tls_config.certs.clone(),
+            key: Arc::clone(&read_guard.tls_config.priv_key),
             ocsp: None,
             sct_list: None,
         })

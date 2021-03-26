@@ -10,7 +10,7 @@ pub static VALIDATE_TOKENS: AtomicBool = AtomicBool::new(false);
 // everywhere.
 pub static SEND_SERVER_VERSION: AtomicBool = AtomicBool::new(false);
 
-#[derive(Clap)]
+#[derive(Clap, Clone)]
 pub struct CliArgs {
     /// The port to listen on.
     #[clap(short, long, default_value = "42069", env = "PORT")]
