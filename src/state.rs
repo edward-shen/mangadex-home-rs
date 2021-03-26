@@ -1,10 +1,8 @@
-use std::{
-    io::BufReader,
-    sync::{atomic::Ordering, Arc},
-};
+use std::io::BufReader;
+use std::sync::{atomic::Ordering, Arc};
 
+use crate::config::{SEND_SERVER_VERSION, VALIDATE_TOKENS};
 use crate::ping::{Request, Response, Tls, CONTROL_CENTER_PING_URL};
-use crate::routes::SEND_SERVER_VERSION;
 use crate::{cache::Cache, config::CliArgs};
 use log::{error, info, warn};
 use parking_lot::RwLock;
@@ -18,7 +16,6 @@ pub struct ServerState {
     pub precomputed_key: PrecomputedKey,
     pub image_server: Url,
     pub tls_config: Tls,
-    pub force_tokens: bool,
     pub url: String,
     pub cache: Cache,
     pub log_state: LogState,
@@ -36,7 +33,10 @@ impl ServerState {
             .send()
             .await;
 
-        SEND_SERVER_VERSION.store(config.enable_server_string, Ordering::Release);
+        if config.enable_server_string {
+            warn!("Client will send Server header in responses. This is not recommended!");
+            SEND_SERVER_VERSION.store(true, Ordering::Release);
+        }
 
         match resp {
             Ok(resp) => match resp.json::<Response>().await {
@@ -72,11 +72,12 @@ impl ServerState {
                         info!("This client will not validate tokens.");
                     }
 
+                    VALIDATE_TOKENS.store(resp.force_tokens, Ordering::Release);
+
                     Ok(Self {
                         precomputed_key: key,
                         image_server: resp.image_server,
                         tls_config: resp.tls.unwrap(),
-                        force_tokens: resp.force_tokens,
                         url: resp.url,
                         cache: Cache::new(
                             config.memory_quota.get(),

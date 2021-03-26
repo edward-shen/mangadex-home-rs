@@ -1,5 +1,11 @@
 A Rust implementation of a Mangadex @ Home client.
 
+This client contains the following features:
+
+ - Multi-threaded
+ - HTTP/2 support
+ - No support for TLS 1.1 or 1.0
+
 ## Building
 
 ```sh
@@ -21,24 +27,42 @@ Note that these quotas are closer to a rough estimate, and is not guaranteed to
 be strictly below these values, so it's recommended to under set your config
 values to make sure you don't exceed the actual quota.
 
+## Installation
+
+Either build it from source or run `cargo install mangadex-home`.
+
 ## Running
 
-This version relies on loading configurations from `env`, or from a file called
-`.env`. The config options are below:
+Run `mangadex-home`, and make sure the advertised port is open on your firewall.
+Do note that some configuration fields are required. See the next section for
+details.
 
-```
-# Your MD@H client secret
-CLIENT_SECRET=
-# The port to use
-PORT=
-# The maximum disk cache size, in bytes
-DISK_CACHE_QUOTA_BYTES=
-# The path where the on-disk cache should be stored
-DISK_CACHE_PATH="./cache" # Optional, default is "./cache"
-# The maximum memory cache size, in bytes
-MEM_CACHE_QUOTA_BYTES=
-# The maximum memory speed, in bytes per second.
-MAX_NETWORK_SPEED=
-```
+## Configuration
 
-After these values have been set, simply run the client.
+Most configuration options can be either provided on the command line, sourced
+from a `.env` file, or sourced directly from the environment. Do not that the
+client secret is an exception. You must provide the client secret from the
+environment or from the `.env` file, as providing client secrets in a shell is a
+operation security risk.
+
+The following options are required:
+
+ - Client Secret
+ - Memory cache quota
+ - Disk cache quota
+ - Advertised network speed
+
+The following are optional as a default value will be set for you:
+
+ - Port
+ - Disk cache path
+
+ ### Advanced configuration
+
+ This implementation prefers to act more secure by default. As a result, some
+ features that the official specification requires are not enabled by default.
+ If you don't know why these features are disabled by default, then don't enable
+ these, as they may generally weaken the security stance of the client for more
+ compatibility.
+
+ - Sending Server version string

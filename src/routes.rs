@@ -1,7 +1,5 @@
-use std::{
-    convert::Infallible,
-    sync::atomic::{AtomicBool, Ordering},
-};
+use std::convert::Infallible;
+use std::sync::atomic::Ordering;
 
 use actix_web::dev::HttpResponseBuilder;
 use actix_web::http::header::{
@@ -21,11 +19,10 @@ use thiserror::Error;
 
 use crate::cache::{CacheKey, CachedImage};
 use crate::client_api_version;
+use crate::config::{SEND_SERVER_VERSION, VALIDATE_TOKENS};
 use crate::state::RwLockServerState;
 
 pub const BASE64_CONFIG: base64::Config = base64::Config::new(base64::CharacterSet::UrlSafe, false);
-
-pub static SEND_SERVER_VERSION: AtomicBool = AtomicBool::new(false);
 
 const SERVER_ID_STRING: &str = concat!(
     env!("CARGO_CRATE_NAME"),
@@ -57,7 +54,7 @@ async fn token_data(
     path: Path<(String, String, String)>,
 ) -> impl Responder {
     let (token, chapter_hash, file_name) = path.into_inner();
-    if state.0.read().force_tokens {
+    if VALIDATE_TOKENS.load(Ordering::Acquire) {
         if let Err(e) = validate_token(&state.0.read().precomputed_key, token, &chapter_hash) {
             return ServerResponse::TokenValidationError(e);
         }
@@ -72,7 +69,7 @@ async fn token_data_saver(
     path: Path<(String, String, String)>,
 ) -> impl Responder {
     let (token, chapter_hash, file_name) = path.into_inner();
-    if state.0.read().force_tokens {
+    if VALIDATE_TOKENS.load(Ordering::Acquire) {
         if let Err(e) = validate_token(&state.0.read().precomputed_key, token, &chapter_hash) {
             return ServerResponse::TokenValidationError(e);
         }
@@ -185,15 +182,23 @@ async fn fetch_image(
         return construct_response(cached);
     }
 
-    let mut state = state.0.write();
+    // It's important to not get a write lock before this request, else we're
+    // holding the read lock until the await resolves.
 
     let resp = if is_data_saver {
         reqwest::get(format!(
             "{}/data-saver/{}/{}",
-            state.image_server, &key.1, &key.2
+            state.0.read().image_server,
+            &key.1,
+            &key.2
         ))
     } else {
-        reqwest::get(format!("{}/data/{}/{}", state.image_server, &key.1, &key.2))
+        reqwest::get(format!(
+            "{}/data/{}/{}",
+            state.0.read().image_server,
+            &key.1,
+            &key.2
+        ))
     }
     .await;
 
@@ -238,7 +243,7 @@ async fn fetch_image(
                         last_modified,
                     };
                     let resp = construct_response(&cached);
-                    state.cache.put(key, cached).await;
+                    state.0.write().cache.put(key, cached).await;
                     return resp;
                 }
                 Err(e) => {

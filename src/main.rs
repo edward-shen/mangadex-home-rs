@@ -2,13 +2,11 @@
 // We're end users, so these is ok
 #![allow(clippy::future_not_send, clippy::module_name_repetitions)]
 
+use std::env::{self, VarError};
+use std::process;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
-use std::{
-    env::{self, VarError},
-    process,
-};
 use std::{num::ParseIntError, sync::atomic::Ordering};
 
 use actix_web::rt::{spawn, time, System};
@@ -37,6 +35,7 @@ macro_rules! client_api_version {
         "30"
     };
 }
+
 #[derive(Error, Debug)]
 enum ServerError {
     #[error("There was a failure parsing config")]
@@ -50,22 +49,33 @@ async fn main() -> Result<(), std::io::Error> {
     // It's ok to fail early here, it would imply we have a invalid config.
     dotenv::dotenv().ok();
     let cli_args = CliArgs::parse();
+    let port = cli_args.port;
 
     SimpleLogger::new()
         .with_level(LevelFilter::Info)
         .init()
         .unwrap();
-    let port = cli_args.port;
 
     let client_secret = if let Ok(v) = env::var("CLIENT_SECRET") {
         v
     } else {
-        eprintln!("Client secret not found in ENV. Please set CLIENT_SECRET.");
+        error!("Client secret not found in ENV. Please set CLIENT_SECRET.");
         process::exit(1);
     };
     let client_secret_1 = client_secret.clone();
 
     let server = ServerState::init(&client_secret, &cli_args).await.unwrap();
+    let data_0 = Arc::new(RwLockServerState(RwLock::new(server)));
+    let data_1 = Arc::clone(&data_0);
+
+    // What's nice is that Rustls only supports TLS 1.2 and 1.3.
+    let mut tls_config = ServerConfig::new(NoClientAuth::new());
+    tls_config.cert_resolver = data_0.clone();
+
+    //
+    // At this point, the server is ready to start, and starts the necessary
+    // threads.
+    //
 
     // Set ctrl+c to send a stop message
     let running = Arc::new(AtomicBool::new(true));
@@ -79,10 +89,7 @@ async fn main() -> Result<(), std::io::Error> {
     })
     .expect("Error setting Ctrl-C handler");
 
-    let data_0 = Arc::new(RwLockServerState(RwLock::new(server)));
-    let data_1 = Arc::clone(&data_0);
-    let data_2 = Arc::clone(&data_0);
-
+    // Spawn ping task
     spawn(async move {
         let mut interval = time::interval(Duration::from_secs(90));
         let mut data = Arc::clone(&data_0);
@@ -93,9 +100,7 @@ async fn main() -> Result<(), std::io::Error> {
         }
     });
 
-    let mut tls_config = ServerConfig::new(NoClientAuth::new());
-    tls_config.cert_resolver = data_2;
-
+    // Start HTTPS server
     HttpServer::new(move || {
         App::new()
             .service(routes::token_data)

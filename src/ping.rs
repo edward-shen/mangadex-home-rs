@@ -1,6 +1,7 @@
+use std::sync::Arc;
 use std::{
     num::{NonZeroU16, NonZeroUsize},
-    sync::Arc,
+    sync::atomic::Ordering,
 };
 
 use log::{error, info, warn};
@@ -8,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use sodiumoxide::crypto::box_::PrecomputedKey;
 use url::Url;
 
+use crate::config::VALIDATE_TOKENS;
 use crate::state::RwLockServerState;
 use crate::{client_api_version, config::CliArgs};
 
@@ -96,13 +98,13 @@ pub async fn update_server_state(secret: &str, req: &CliArgs, data: &mut Arc<RwL
                     }
                 }
 
-                if write_guard.force_tokens != resp.force_tokens {
-                    write_guard.force_tokens = resp.force_tokens;
+                if VALIDATE_TOKENS.load(Ordering::Acquire) != resp.force_tokens {
                     if resp.force_tokens {
                         info!("Client received command to enforce token validity.");
                     } else {
                         info!("Client received command to no longer enforce token validity");
                     }
+                    VALIDATE_TOKENS.store(resp.force_tokens, Ordering::Release);
                 }
 
                 if let Some(tls) = resp.tls {

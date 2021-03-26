@@ -1,7 +1,14 @@
 use std::num::{NonZeroU16, NonZeroUsize};
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 
 use clap::Clap;
+
+// Validate tokens is an atomic because it's faster than locking on rwlock.
+pub static VALIDATE_TOKENS: AtomicBool = AtomicBool::new(false);
+// We use an atomic here because it's better for us to not pass the config
+// everywhere.
+pub static SEND_SERVER_VERSION: AtomicBool = AtomicBool::new(false);
 
 #[derive(Clap)]
 pub struct CliArgs {
@@ -25,6 +32,6 @@ pub struct CliArgs {
     /// Whether or not to provide the Server HTTP header to clients. This is
     /// useful for debugging, but is generally not recommended for security
     /// reasons.
-    #[clap(long, env = "ENABLE_SERVER_STRING")]
+    #[clap(long, env = "ENABLE_SERVER_STRING", takes_value = false)]
     pub enable_server_string: bool,
 }
