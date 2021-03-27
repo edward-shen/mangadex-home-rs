@@ -101,7 +101,6 @@ impl Cache {
             };
 
             // put into in-memory
-            self.memory_cur_size += cached_image.len();
             self.put(key.clone(), cached_image).await;
         }
 
