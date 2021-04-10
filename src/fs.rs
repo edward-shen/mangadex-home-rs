@@ -23,7 +23,7 @@ pub async fn transparent_file_stream(
     mut byte_stream: impl Stream<Item = Result<Bytes, Error>> + Unpin + Send + 'static,
 ) -> Result<impl Stream<Item = Result<Bytes, UpstreamError>>, std::io::Error> {
     if let Some(arc) = WRITING_STATUS.read().get(path) {
-        FromFsStream::new(path, Arc::clone(&arc)).await
+        FromFsStream::new(path, Arc::clone(arc)).await
     } else {
         let done_writing_flag = Arc::new(CacheStatus::new());
 
@@ -121,7 +121,7 @@ struct CacheStatus(AtomicU8);
 
 impl CacheStatus {
     #[inline]
-    fn new() -> Self {
+    const fn new() -> Self {
         Self(AtomicU8::new(WritingStatus::NotDone as u8))
     }
 
