@@ -285,5 +285,5 @@ fn construct_response(cached: &CachedImage) -> ServerResponse {
         resp.append_header((LAST_MODIFIED, &**last_modified));
     }
 
-    return ServerResponse::HttpResponse(push_headers(&mut resp).streaming(stream::iter(data)));
+    ServerResponse::HttpResponse(push_headers(&mut resp).streaming(stream::iter(data)))
 }

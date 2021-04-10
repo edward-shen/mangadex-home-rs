@@ -25,6 +25,7 @@ use thiserror::Error;
 
 mod cache;
 mod config;
+mod fs;
 mod ping;
 mod routes;
 mod state;
