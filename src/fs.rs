@@ -1,8 +1,10 @@
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::pin::Pin;
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::Arc;
 use std::task::{Context, Poll};
-use std::{collections::HashMap, path::PathBuf};
-use std::{path::Path, sync::atomic::Ordering};
-use std::{pin::Pin, sync::atomic::AtomicU8};
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 
 use bytes::{Bytes, BytesMut};
 use futures::{Future, Stream, StreamExt};
