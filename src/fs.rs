@@ -90,7 +90,7 @@ impl FromFsStream {
 }
 
 /// Represents some upstream error.
-struct UpstreamError;
+pub struct UpstreamError;
 
 impl Stream for FromFsStream {
     type Item = Result<Bytes, UpstreamError>;
