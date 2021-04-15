@@ -18,7 +18,7 @@ use serde::Deserialize;
 use sodiumoxide::crypto::box_::{open_precomputed, Nonce, PrecomputedKey, NONCEBYTES};
 use thiserror::Error;
 
-use crate::cache::{Cache, CacheKey, CachedImage};
+use crate::cache::{Cache, CacheKey, CachedImage, GenerationalCache, ImageMetadata};
 use crate::client_api_version;
 use crate::config::{SEND_SERVER_VERSION, VALIDATE_TOKENS};
 use crate::state::RwLockServerState;
@@ -52,7 +52,7 @@ impl Responder for ServerResponse {
 #[get("/{token}/data/{chapter_hash}/{file_name}")]
 async fn token_data(
     state: Data<RwLockServerState>,
-    cache: Data<Mutex<Cache>>,
+    cache: Data<Mutex<GenerationalCache>>,
     path: Path<(String, String, String)>,
 ) -> impl Responder {
     let (token, chapter_hash, file_name) = path.into_inner();
@@ -68,7 +68,7 @@ async fn token_data(
 #[get("/{token}/data-saver/{chapter_hash}/{file_name}")]
 async fn token_data_saver(
     state: Data<RwLockServerState>,
-    cache: Data<Mutex<Cache>>,
+    cache: Data<Mutex<GenerationalCache>>,
     path: Path<(String, String, String)>,
 ) -> impl Responder {
     let (token, chapter_hash, file_name) = path.into_inner();
@@ -175,15 +175,15 @@ fn push_headers(builder: &mut HttpResponseBuilder) -> &mut HttpResponseBuilder {
 
 async fn fetch_image(
     state: Data<RwLockServerState>,
-    cache: Data<Mutex<Cache>>,
+    cache: Data<Mutex<GenerationalCache>>,
     chapter_hash: String,
     file_name: String,
     is_data_saver: bool,
 ) -> ServerResponse {
     let key = CacheKey(chapter_hash, file_name, is_data_saver);
 
-    if let Some(cached) = cache.lock().get(&key).await {
-        return construct_response(cached);
+    if let Some((image, metadata)) = cache.lock().get(&key).await {
+        return construct_response(image, metadata);
     }
 
     // It's important to not get a write lock before this request, else we're
@@ -207,7 +207,7 @@ async fn fetch_image(
     .await;
 
     match resp {
-        Ok(resp) => {
+        Ok(mut resp) => {
             let content_type = resp.headers().get(CONTENT_TYPE);
 
             let is_image = content_type
@@ -230,24 +230,21 @@ async fn fetch_image(
                 );
             }
 
-            let headers = resp.headers();
-            let content_type = headers.get(CONTENT_TYPE).map(AsRef::as_ref).map(Vec::from);
-            let content_length = headers
-                .get(CONTENT_LENGTH)
-                .map(AsRef::as_ref)
-                .map(Vec::from);
-            let last_modified = headers.get(LAST_MODIFIED).map(AsRef::as_ref).map(Vec::from);
+            let (content_type, length, last_mod) = {
+                let headers = resp.headers_mut();
+                (
+                    headers.remove(CONTENT_TYPE),
+                    headers.remove(CONTENT_LENGTH),
+                    headers.remove(LAST_MODIFIED),
+                )
+            };
             let body = resp.bytes().await;
             match body {
                 Ok(bytes) => {
-                    let cached = CachedImage {
-                        data: bytes.to_vec(),
-                        content_type,
-                        content_length,
-                        last_modified,
-                    };
-                    let resp = construct_response(&cached);
-                    cache.lock().put(key, cached).await;
+                    let cached = ImageMetadata::new(content_type, length, last_mod).unwrap();
+                    let image = CachedImage(bytes);
+                    let resp = construct_response(&image, &cached);
+                    cache.lock().put(key, image, cached).await;
                     return resp;
                 }
                 Err(e) => {
@@ -267,22 +264,22 @@ async fn fetch_image(
     }
 }
 
-fn construct_response(cached: &CachedImage) -> ServerResponse {
+fn construct_response(cached: &CachedImage, metadata: &ImageMetadata) -> ServerResponse {
     let data: Vec<Result<Bytes, Infallible>> = cached
-        .data
+        .0
         .to_vec()
         .chunks(1460) // TCP MSS default size
         .map(|v| Ok(Bytes::from(v.to_vec())))
         .collect();
     let mut resp = HttpResponse::Ok();
-    if let Some(content_type) = &cached.content_type {
+    if let Some(content_type) = &metadata.content_type {
         resp.append_header((CONTENT_TYPE, &**content_type));
     }
-    if let Some(content_length) = &cached.content_length {
-        resp.append_header((CONTENT_LENGTH, &**content_length));
+    if let Some(content_length) = &metadata.content_length {
+        resp.append_header((CONTENT_LENGTH, content_length.to_string()));
     }
-    if let Some(last_modified) = &cached.last_modified {
-        resp.append_header((LAST_MODIFIED, &**last_modified));
+    if let Some(last_modified) = &metadata.last_modified {
+        resp.append_header((LAST_MODIFIED, last_modified.to_rfc2822()));
     }
 
     ServerResponse::HttpResponse(push_headers(&mut resp).streaming(stream::iter(data)))

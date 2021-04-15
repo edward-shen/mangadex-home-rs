@@ -12,7 +12,7 @@ use std::{num::ParseIntError, sync::atomic::Ordering};
 use actix_web::rt::{spawn, time, System};
 use actix_web::web::{self, Data};
 use actix_web::{App, HttpServer};
-use cache::Cache;
+use cache::GenerationalCache;
 use clap::Clap;
 use config::CliArgs;
 use log::{debug, error, warn, LevelFilter};
@@ -25,7 +25,6 @@ use thiserror::Error;
 
 mod cache;
 mod config;
-mod fs;
 mod ping;
 mod routes;
 mod state;
@@ -112,7 +111,7 @@ async fn main() -> Result<(), std::io::Error> {
             .service(routes::token_data_saver)
             .route("{tail:.*}", web::get().to(routes::default))
             .app_data(Data::from(Arc::clone(&data_1)))
-            .app_data(Data::new(Mutex::new(Cache::new(
+            .app_data(Data::new(Mutex::new(GenerationalCache::new(
                 memory_max_size,
                 disk_quota,
                 cache_path.clone(),

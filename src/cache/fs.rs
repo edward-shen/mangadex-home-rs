@@ -35,15 +35,15 @@ static WRITING_STATUS: Lazy<RwLock<HashMap<PathBuf, Arc<CacheStatus>>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 
 /// Tries to read from the file, returning a byte stream if it exists
-pub async fn read_file(
-    path: &Path,
-) -> Option<Result<impl Stream<Item = Result<Bytes, UpstreamError>>, std::io::Error>> {
+pub async fn read_file(path: &Path) -> Option<Result<FromFsStream, std::io::Error>> {
     if path.exists() {
-        if let Some(status) = WRITING_STATUS.read().get(path) {
-            Some(FromFsStream::new(path, Arc::clone(status)).await)
-        } else {
-            Some(FromFsStream::new(path, Arc::new(CacheStatus::done())).await)
-        }
+        let status = WRITING_STATUS
+            .read()
+            .get(path)
+            .map(Arc::clone)
+            .unwrap_or_else(|| Arc::new(CacheStatus::done()));
+
+        Some(FromFsStream::new(path, status).await)
     } else {
         None
     }
@@ -54,7 +54,7 @@ pub async fn read_file(
 pub async fn transparent_file_stream(
     path: &Path,
     mut byte_stream: impl Stream<Item = Result<Bytes, Error>> + Unpin + Send + 'static,
-) -> Result<impl Stream<Item = Result<Bytes, UpstreamError>>, std::io::Error> {
+) -> Result<FromFsStream, std::io::Error> {
     let done_writing_flag = Arc::new(CacheStatus::new());
 
     let mut file = {
@@ -73,13 +73,16 @@ pub async fn transparent_file_stream(
         while let Some(bytes) = byte_stream.next().await {
             match bytes {
                 Ok(bytes) => file.write_all(&bytes).await?,
-                Err(_) => was_errored = true,
+                Err(_) => {
+                    was_errored = true;
+                    break;
+                }
             }
         }
 
         if was_errored {
             // It's ok if the deleting the file fails, since we truncate on
-            // create anyways
+            // create anyways, but it should be best effort
             let _ = remove_file(&path_buf).await;
         } else {
             file.flush().await?;
@@ -103,7 +106,7 @@ pub async fn transparent_file_stream(
     Ok(FromFsStream::new(path, done_writing_flag).await?)
 }
 
-struct FromFsStream {
+pub struct FromFsStream {
     file: Pin<Box<File>>,
     sleep: Pin<Box<Sleep>>,
     is_file_done_writing: Arc<CacheStatus>,
