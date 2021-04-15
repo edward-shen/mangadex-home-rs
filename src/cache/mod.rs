@@ -1,5 +1,5 @@
-use std::fmt::Display;
 use std::path::PathBuf;
+use std::{fmt::Display, str::FromStr};
 
 use actix_web::http::HeaderValue;
 use async_trait::async_trait;
@@ -36,19 +36,54 @@ impl From<CacheKey> for PathBuf {
     }
 }
 
-impl From<&CacheKey> for PathBuf {
+pub struct CachedImage(pub Bytes);
+
+#[derive(Copy, Clone)]
+pub struct ImageMetadata {
+    pub content_type: Option<ImageContentType>,
+    pub content_length: Option<usize>,
+    pub last_modified: Option<DateTime<FixedOffset>>,
+}
+
+// Note to self: If these are wrong blame Triscuit 9
+#[derive(Copy, Clone)]
+pub enum ImageContentType {
+    Png,
+    Jpeg,
+    Gif,
+    Bmp,
+    Tif,
+}
+
+pub struct InvalidContentType;
+
+impl FromStr for ImageContentType {
+    type Err = InvalidContentType;
+
     #[inline]
-    fn from(key: &CacheKey) -> Self {
-        key.to_string().into()
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "image/png" => Ok(Self::Png),
+            "image/jpeg" => Ok(Self::Jpeg),
+            "image/gif" => Ok(Self::Gif),
+            "image/bmp" => Ok(Self::Bmp),
+            "image/tif" => Ok(Self::Tif),
+            _ => Err(InvalidContentType),
+        }
     }
 }
 
-pub struct CachedImage(pub Bytes);
-
-pub struct ImageMetadata {
-    pub content_type: Option<String>,
-    pub content_length: Option<usize>,
-    pub last_modified: Option<DateTime<FixedOffset>>,
+impl AsRef<str> for ImageContentType {
+    #[inline]
+    fn as_ref(&self) -> &str {
+        match self {
+            Self::Png => "image/png",
+            Self::Jpeg => "image/jpeg",
+            Self::Gif => "image/gif",
+            Self::Bmp => "image/bmp",
+            Self::Tif => "image/tif",
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -66,7 +101,10 @@ impl ImageMetadata {
     ) -> Result<Self, ImageRequestError> {
         Ok(Self {
             content_type: content_type
-                .map(|v| v.to_str().map(|v| v.to_string()))
+                .map(|v| match v.to_str() {
+                    Ok(v) => ImageContentType::from_str(v),
+                    Err(_) => Err(InvalidContentType),
+                })
                 .transpose()
                 .map_err(|_| ImageRequestError::InvalidContentType)?,
             content_length: content_length

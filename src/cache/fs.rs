@@ -28,7 +28,7 @@ use tokio::time::Sleep;
 /// up to Client A's request, then Client B could receive a broken image, as it
 /// thinks it's done reading the file.
 ///
-/// We effectively use WRITING_STATUS as a status relay to ensure concurrent
+/// We effectively use `WRITING_STATUS` as a status relay to ensure concurrent
 /// reads to the file while it's being written to will wait for writing to be
 /// completed.
 static WRITING_STATUS: Lazy<RwLock<HashMap<PathBuf, Arc<CacheStatus>>>> =
@@ -40,8 +40,7 @@ pub async fn read_file(path: &Path) -> Option<Result<FromFsStream, std::io::Erro
         let status = WRITING_STATUS
             .read()
             .get(path)
-            .map(Arc::clone)
-            .unwrap_or_else(|| Arc::new(CacheStatus::done()));
+            .map_or_else(|| Arc::new(CacheStatus::done()), Arc::clone);
 
         Some(FromFsStream::new(path, status).await)
     } else {
@@ -69,18 +68,17 @@ pub async fn transparent_file_stream(
     let path_buf = path.to_path_buf();
     tokio::spawn(async move {
         let path_buf = path_buf; // moves path buf into async
-        let mut was_errored = false;
+        let mut errored = false;
         while let Some(bytes) = byte_stream.next().await {
-            match bytes {
-                Ok(bytes) => file.write_all(&bytes).await?,
-                Err(_) => {
-                    was_errored = true;
-                    break;
-                }
+            if let Ok(bytes) = bytes {
+                file.write_all(&bytes).await?
+            } else {
+                errored = true;
+                break;
             }
         }
 
-        if was_errored {
+        if errored {
             // It's ok if the deleting the file fails, since we truncate on
             // create anyways, but it should be best effort
             let _ = remove_file(&path_buf).await;
@@ -92,7 +90,7 @@ pub async fn transparent_file_stream(
         let mut write_lock = WRITING_STATUS.write();
         // This needs to be written atomically with the write lock, else
         // it's possible we have an inconsistent state
-        if was_errored {
+        if errored {
             write_flag.store(WritingStatus::Error);
         } else {
             write_flag.store(WritingStatus::Done);

@@ -1,4 +1,4 @@
-use std::num::{NonZeroU16, NonZeroUsize};
+use std::num::{NonZeroU16, NonZeroU64};
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 
@@ -18,17 +18,17 @@ pub struct CliArgs {
     /// How large, in bytes, the in-memory cache should be. Note that this does
     /// not include runtime memory usage.
     #[clap(long, env = "MEM_CACHE_QUOTA_BYTES")]
-    pub memory_quota: NonZeroUsize,
+    pub memory_quota: NonZeroU64,
     /// How large, in bytes, the on-disk cache should be. Note that actual
     /// values may be larger for metadata information.
     #[clap(long, env = "DISK_CACHE_QUOTA_BYTES")]
-    pub disk_quota: usize,
+    pub disk_quota: u64,
     /// Sets the location of the disk cache.
     #[clap(long, default_value = "./cache", env = "DISK_CACHE_PATH")]
     pub cache_path: PathBuf,
     /// The network speed to advertise to Mangadex@Home control server.
     #[clap(long, env = "MAX_NETWORK_SPEED")]
-    pub network_speed: NonZeroUsize,
+    pub network_speed: NonZeroU64,
     /// Whether or not to provide the Server HTTP header to clients. This is
     /// useful for debugging, but is generally not recommended for security
     /// reasons.

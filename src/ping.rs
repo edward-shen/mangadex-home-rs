@@ -1,6 +1,6 @@
 use std::{io::BufReader, sync::Arc};
 use std::{
-    num::{NonZeroU16, NonZeroUsize},
+    num::{NonZeroU16, NonZeroU64},
     sync::atomic::Ordering,
 };
 
@@ -27,9 +27,9 @@ pub const CONTROL_CENTER_PING_URL: &str = "https://api.mangadex.network/ping";
 pub struct Request<'a> {
     secret: &'a str,
     port: NonZeroU16,
-    disk_space: usize,
-    network_speed: NonZeroUsize,
-    build_version: usize,
+    disk_space: u64,
+    network_speed: NonZeroU64,
+    build_version: u64,
     tls_created_at: Option<String>,
 }
 

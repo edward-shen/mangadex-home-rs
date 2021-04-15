@@ -31,7 +31,7 @@ impl LowMemCache {
 impl Cache for LowMemCache {
     async fn get_stream(&mut self, key: &CacheKey) -> Option<Result<FromFsStream, std::io::Error>> {
         if self.on_disk.get(key).is_some() {
-            super::fs::read_file(&Path::new(&key.to_string())).await
+            super::fs::read_file(Path::new(&key.to_string())).await
         } else {
             None
         }

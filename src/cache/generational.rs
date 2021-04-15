@@ -11,17 +11,17 @@ use super::{Cache, CacheKey, CachedImage, ImageMetadata};
 
 pub struct GenerationalCache {
     in_memory: LruCache<CacheKey, (CachedImage, ImageMetadata)>,
-    memory_max_size: usize,
-    memory_cur_size: usize,
+    memory_max_size: u64,
+    memory_cur_size: u64,
 
     on_disk: LruCache<CacheKey, ImageMetadata>,
     disk_path: PathBuf,
-    disk_max_size: usize,
-    disk_cur_size: usize,
+    disk_max_size: u64,
+    disk_cur_size: u64,
 }
 
 impl GenerationalCache {
-    pub fn new(memory_max_size: usize, disk_max_size: usize, disk_path: PathBuf) -> Self {
+    pub fn new(memory_max_size: u64, disk_max_size: u64, disk_path: PathBuf) -> Self {
         Self {
             in_memory: LruCache::unbounded(),
             memory_max_size,
@@ -38,9 +38,9 @@ impl GenerationalCache {
         let new_img_size = image.0.len();
         let mut to_drop = vec![];
 
-        if self.disk_max_size >= new_img_size {
+        if self.disk_max_size >= new_img_size as u64 {
             // Add images to drop from cold cache into a queue
-            while new_img_size + self.disk_cur_size > self.disk_max_size {
+            while new_img_size as u64 + self.disk_cur_size > self.disk_max_size {
                 match self.on_disk.pop_lru() {
                     Some((key, _)) => {
                         let mut path = self.disk_path.clone();
@@ -72,7 +72,7 @@ impl GenerationalCache {
                                 })
                                 .unwrap_or_default();
 
-                            self.disk_cur_size -= file_size as usize;
+                            self.disk_cur_size -= file_size;
                         }
 
                         to_drop.push(path);
@@ -102,7 +102,7 @@ impl GenerationalCache {
 
         let new_key_path = {
             let mut root = self.disk_path.clone();
-            root.push(PathBuf::from(&key));
+            root.push(PathBuf::from(key.clone()));
             root
         };
 
@@ -112,7 +112,7 @@ impl GenerationalCache {
                 match file.write_all(&image.0).await {
                     Ok(_) => {
                         self.on_disk.put(key, metadata);
-                        self.disk_cur_size += new_img_size;
+                        self.disk_cur_size += new_img_size as u64;
                         debug!(
                             "Successfully written data to disk for file {:?}",
                             new_key_path
@@ -140,18 +140,16 @@ impl Cache for GenerationalCache {
         if let Some(metadata) = self.on_disk.pop(key) {
             let new_key_path = {
                 let mut root = self.disk_path.clone();
-                root.push(PathBuf::from(key));
+                root.push(PathBuf::from(key.clone()));
                 root
             };
 
             // extract from disk, if it exists
-            let file = File::open(new_key_path.clone()).await;
+            let file = File::open(&new_key_path).await;
 
-            let mut buffer = if let Some(size) = metadata.content_length {
-                Vec::with_capacity(size)
-            } else {
-                Vec::new()
-            };
+            let mut buffer = metadata
+                .content_length
+                .map_or_else(Vec::new, Vec::with_capacity);
 
             match file {
                 Ok(mut file) => {
@@ -159,7 +157,7 @@ impl Cache for GenerationalCache {
                         Ok(_) => {
                             // We don't particularly care if we fail to delete from disk since
                             // if it's an error it means it's already been dropped.
-                            tokio::spawn(remove_file(new_key_path.clone()));
+                            tokio::spawn(remove_file(new_key_path));
                         }
                         Err(e) => {
                             warn!("Failed to read from {:?}: {}", new_key_path, e);
@@ -174,7 +172,7 @@ impl Cache for GenerationalCache {
 
             buffer.shrink_to_fit();
 
-            self.disk_cur_size -= buffer.len();
+            self.disk_cur_size -= buffer.len() as u64;
             let image = CachedImage(Bytes::from(buffer));
 
             // Since we just put it in the in-memory cache it should be there
@@ -189,14 +187,14 @@ impl Cache for GenerationalCache {
     #[inline]
     async fn put(&mut self, key: CacheKey, image: CachedImage, metadata: ImageMetadata) {
         let mut hot_evicted = vec![];
-        let new_img_size = image.0.len();
+        let new_img_size = image.0.len() as u64;
 
         if self.memory_max_size >= new_img_size {
             // Evict oldest entires to make space for new image.
             while new_img_size + self.memory_cur_size > self.memory_max_size {
                 match self.in_memory.pop_lru() {
                     Some((key, (image, metadata))) => {
-                        self.memory_cur_size -= image.0.len();
+                        self.memory_cur_size -= image.0.len() as u64;
                         hot_evicted.push((key, image, metadata));
                     }
                     None => unreachable!(concat!(

@@ -273,7 +273,7 @@ fn construct_response(cached: &CachedImage, metadata: &ImageMetadata) -> ServerR
         .collect();
     let mut resp = HttpResponse::Ok();
     if let Some(content_type) = &metadata.content_type {
-        resp.append_header((CONTENT_TYPE, &**content_type));
+        resp.append_header((CONTENT_TYPE, content_type.as_ref()));
     }
     if let Some(content_length) = &metadata.content_length {
         resp.append_header((CONTENT_LENGTH, content_length.to_string()));
