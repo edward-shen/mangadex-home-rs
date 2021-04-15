@@ -131,7 +131,7 @@ impl ImageMetadata {
 }
 
 #[async_trait]
-pub trait Cache {
+pub trait Cache: Send + Sync {
     async fn get(&mut self, _key: &CacheKey) -> Option<&(CachedImage, ImageMetadata)> {
         unimplemented!()
     }
@@ -147,11 +147,20 @@ pub trait Cache {
         unimplemented!()
     }
 
-    async fn put_stream(
-        &mut self,
-        _key: CacheKey,
-        _image: impl Stream<Item = Result<Bytes, reqwest::Error>> + Unpin + Send + 'static,
-    ) {
+    async fn put_stream(&mut self, _key: CacheKey, _image: ByteStream) {
         unimplemented!()
+    }
+}
+
+pub enum ByteStream {}
+
+impl Stream for ByteStream {
+    type Item = Result<Bytes, reqwest::Error>;
+
+    fn poll_next(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        todo!()
     }
 }

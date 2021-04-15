@@ -7,17 +7,17 @@ use bytes::Bytes;
 use futures::Stream;
 use lru::LruCache;
 
-use super::{fs::FromFsStream, Cache, CacheKey};
+use super::{fs::FromFsStream, ByteStream, Cache, CacheKey};
 
 pub struct LowMemCache {
     on_disk: LruCache<CacheKey, ()>,
     disk_path: PathBuf,
-    disk_max_size: usize,
-    disk_cur_size: usize,
+    disk_max_size: u64,
+    disk_cur_size: u64,
 }
 
 impl LowMemCache {
-    pub fn new(disk_max_size: usize, disk_path: PathBuf) -> Self {
+    pub fn new(disk_max_size: u64, disk_path: PathBuf) -> Self {
         Self {
             on_disk: LruCache::unbounded(),
             disk_path,
@@ -37,10 +37,8 @@ impl Cache for LowMemCache {
         }
     }
 
-    async fn put_stream(
-        &mut self,
-        key: CacheKey,
-        image: impl Stream<Item = Result<Bytes, reqwest::Error>> + Unpin + Send + 'static,
-    ) {
+    async fn put_stream(&mut self, key: CacheKey, image: ByteStream) {
+        // this call has a side effect and the returned future is for reading
+        let _ = super::fs::transparent_file_stream(&PathBuf::from(key), image);
     }
 }

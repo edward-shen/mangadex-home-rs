@@ -12,7 +12,7 @@ use std::{num::ParseIntError, sync::atomic::Ordering};
 use actix_web::rt::{spawn, time, System};
 use actix_web::web::{self, Data};
 use actix_web::{App, HttpServer};
-use cache::GenerationalCache;
+use cache::{Cache, GenerationalCache, LowMemCache};
 use clap::Clap;
 use config::CliArgs;
 use log::{debug, error, warn, LevelFilter};
@@ -54,6 +54,7 @@ async fn main() -> Result<(), std::io::Error> {
     let memory_max_size = cli_args.memory_quota.get();
     let disk_quota = cli_args.disk_quota;
     let cache_path = cli_args.cache_path.clone();
+    let low_mem_mode = cli_args.low_memory;
 
     SimpleLogger::new()
         .with_level(LevelFilter::Info)
@@ -106,16 +107,22 @@ async fn main() -> Result<(), std::io::Error> {
 
     // Start HTTPS server
     HttpServer::new(move || {
+        let cache: Box<dyn Cache> = if low_mem_mode {
+            Box::new(LowMemCache::new(disk_quota, cache_path.clone()))
+        } else {
+            Box::new(GenerationalCache::new(
+                memory_max_size,
+                disk_quota,
+                cache_path.clone(),
+            ))
+        };
+
         App::new()
             .service(routes::token_data)
             .service(routes::token_data_saver)
             .route("{tail:.*}", web::get().to(routes::default))
             .app_data(Data::from(Arc::clone(&data_1)))
-            .app_data(Data::new(Mutex::new(GenerationalCache::new(
-                memory_max_size,
-                disk_quota,
-                cache_path.clone(),
-            ))))
+            .app_data(Data::new(Mutex::new(cache)))
     })
     .shutdown_timeout(60)
     .bind_rustls(format!("0.0.0.0:{}", port), tls_config)?

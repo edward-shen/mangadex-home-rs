@@ -18,7 +18,7 @@ use serde::Deserialize;
 use sodiumoxide::crypto::box_::{open_precomputed, Nonce, PrecomputedKey, NONCEBYTES};
 use thiserror::Error;
 
-use crate::cache::{Cache, CacheKey, CachedImage, GenerationalCache, ImageMetadata};
+use crate::cache::{Cache, CacheKey, CachedImage, ImageMetadata};
 use crate::client_api_version;
 use crate::config::{SEND_SERVER_VERSION, VALIDATE_TOKENS};
 use crate::state::RwLockServerState;
@@ -52,7 +52,7 @@ impl Responder for ServerResponse {
 #[get("/{token}/data/{chapter_hash}/{file_name}")]
 async fn token_data(
     state: Data<RwLockServerState>,
-    cache: Data<Mutex<GenerationalCache>>,
+    cache: Data<Mutex<Box<dyn Cache>>>,
     path: Path<(String, String, String)>,
 ) -> impl Responder {
     let (token, chapter_hash, file_name) = path.into_inner();
@@ -68,7 +68,7 @@ async fn token_data(
 #[get("/{token}/data-saver/{chapter_hash}/{file_name}")]
 async fn token_data_saver(
     state: Data<RwLockServerState>,
-    cache: Data<Mutex<GenerationalCache>>,
+    cache: Data<Mutex<Box<dyn Cache>>>,
     path: Path<(String, String, String)>,
 ) -> impl Responder {
     let (token, chapter_hash, file_name) = path.into_inner();
@@ -175,7 +175,7 @@ fn push_headers(builder: &mut HttpResponseBuilder) -> &mut HttpResponseBuilder {
 
 async fn fetch_image(
     state: Data<RwLockServerState>,
-    cache: Data<Mutex<GenerationalCache>>,
+    cache: Data<Mutex<Box<dyn Cache>>>,
     chapter_hash: String,
     file_name: String,
     is_data_saver: bool,
