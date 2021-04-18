@@ -2,7 +2,7 @@ use std::num::{NonZeroU16, NonZeroU64};
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 
-use clap::Clap;
+use clap::{crate_authors, crate_description, crate_version, Clap};
 
 // Validate tokens is an atomic because it's faster than locking on rwlock.
 pub static VALIDATE_TOKENS: AtomicBool = AtomicBool::new(false);
@@ -11,6 +11,7 @@ pub static VALIDATE_TOKENS: AtomicBool = AtomicBool::new(false);
 pub static SEND_SERVER_VERSION: AtomicBool = AtomicBool::new(false);
 
 #[derive(Clap, Clone)]
+#[clap(version = crate_version!(), author = crate_authors!(), about = crate_description!())]
 pub struct CliArgs {
     /// The port to listen on.
     #[clap(short, long, default_value = "42069", env = "PORT")]
@@ -34,6 +35,6 @@ pub struct CliArgs {
     /// reasons.
     #[clap(long, env = "ENABLE_SERVER_STRING", takes_value = false)]
     pub enable_server_string: bool,
-    #[clap(short, long, conflicts_with("memory_quota"), env = "LOW_MEMORY_MODE")]
+    #[clap(short, long, conflicts_with("memory-quota"), env = "LOW_MEMORY_MODE")]
     pub low_memory: bool,
 }
