@@ -2,12 +2,15 @@ use std::path::PathBuf;
 
 use async_trait::async_trait;
 use bytes::Bytes;
+use futures::{stream::StreamExt, TryStreamExt};
 use log::{debug, warn};
 use lru::LruCache;
 use tokio::fs::{remove_file, File};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use super::{Cache, CacheKey, CachedImage, ImageMetadata};
+use super::{
+    BoxedImageStream, Cache, CacheError, CacheKey, CacheStream, CachedImage, ImageMetadata,
+};
 
 pub struct GenerationalCache {
     in_memory: LruCache<CacheKey, (CachedImage, ImageMetadata)>,
@@ -132,9 +135,16 @@ impl GenerationalCache {
 
 #[async_trait]
 impl Cache for GenerationalCache {
-    async fn get(&mut self, key: &CacheKey) -> Option<&(CachedImage, ImageMetadata)> {
+    async fn get(
+        &mut self,
+        key: &CacheKey,
+    ) -> Option<Result<(CacheStream, &ImageMetadata), CacheError>> {
         if self.in_memory.contains(key) {
-            return self.in_memory.get(key);
+            return self
+                .in_memory
+                .get(key)
+                // TODO: get rid of clone?
+                .map(|(image, metadata)| Ok((CacheStream::from(image.clone()), metadata)));
         }
 
         if let Some(metadata) = self.on_disk.pop(key) {
@@ -149,7 +159,7 @@ impl Cache for GenerationalCache {
 
             let mut buffer = metadata
                 .content_length
-                .map_or_else(Vec::new, Vec::with_capacity);
+                .map_or_else(Vec::new, |v| Vec::with_capacity(v as usize));
 
             match file {
                 Ok(mut file) => {
@@ -173,20 +183,30 @@ impl Cache for GenerationalCache {
             buffer.shrink_to_fit();
 
             self.disk_cur_size -= buffer.len() as u64;
-            let image = CachedImage(Bytes::from(buffer));
+            let image = CacheStream::from(CachedImage(Bytes::from(buffer))).map_err(|e| e.into());
 
-            // Since we just put it in the in-memory cache it should be there
-            // when we retrieve it
-            self.put(key.clone(), image, metadata).await;
-            return self.get(key).await;
+            return Some(self.put(key.clone(), Box::new(image), metadata).await);
         }
 
         None
     }
 
-    #[inline]
-    async fn put(&mut self, key: CacheKey, image: CachedImage, metadata: ImageMetadata) {
+    async fn put(
+        &mut self,
+        key: CacheKey,
+        mut image: BoxedImageStream,
+        metadata: ImageMetadata,
+    ) -> Result<(CacheStream, &ImageMetadata), CacheError> {
         let mut hot_evicted = vec![];
+
+        let image = {
+            let mut resolved = vec![];
+            while let Some(bytes) = image.next().await {
+                resolved.extend(bytes?);
+            }
+            CachedImage(Bytes::from(resolved))
+        };
+
         let new_img_size = image.0.len() as u64;
 
         if self.memory_max_size >= new_img_size {
@@ -204,17 +224,19 @@ impl Cache for GenerationalCache {
                 }
             }
 
-            self.in_memory.put(key, (image, metadata));
+            self.in_memory.put(key.clone(), (image, metadata));
             self.memory_cur_size += new_img_size;
         } else {
             // Image was larger than memory capacity, push directly into cold
             // storage.
-            self.push_into_cold(key, image, metadata).await;
+            self.push_into_cold(key.clone(), image, metadata).await;
         };
 
         // Push evicted hot entires into cold storage.
         for (key, image, metadata) in hot_evicted {
             self.push_into_cold(key, image, metadata).await;
         }
+
+        self.get(&key).await.unwrap()
     }
 }

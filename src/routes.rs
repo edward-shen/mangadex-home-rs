@@ -1,4 +1,3 @@
-use std::convert::Infallible;
 use std::sync::atomic::Ordering;
 
 use actix_web::dev::HttpResponseBuilder;
@@ -11,14 +10,14 @@ use actix_web::{get, web::Data, HttpRequest, HttpResponse, Responder};
 use base64::DecodeError;
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
-use futures::stream;
+use futures::{Stream, TryStreamExt};
 use log::{error, info, warn};
 use parking_lot::Mutex;
 use serde::Deserialize;
 use sodiumoxide::crypto::box_::{open_precomputed, Nonce, PrecomputedKey, NONCEBYTES};
 use thiserror::Error;
 
-use crate::cache::{Cache, CacheKey, CachedImage, ImageMetadata};
+use crate::cache::{Cache, CacheKey, ImageMetadata, UpstreamError};
 use crate::client_api_version;
 use crate::config::{SEND_SERVER_VERSION, VALIDATE_TOKENS};
 use crate::state::RwLockServerState;
@@ -182,8 +181,10 @@ async fn fetch_image(
 ) -> ServerResponse {
     let key = CacheKey(chapter_hash, file_name, is_data_saver);
 
-    if let Some((image, metadata)) = cache.lock().get(&key).await {
-        return construct_response(image, metadata);
+    match cache.lock().get(&key).await {
+        Some(Ok((image, metadata))) => return construct_response(image, metadata),
+        Some(Err(_)) => return ServerResponse::HttpResponse(HttpResponse::BadGateway().finish()),
+        _ => (),
     }
 
     // It's important to not get a write lock before this request, else we're
@@ -238,22 +239,17 @@ async fn fetch_image(
                     headers.remove(LAST_MODIFIED),
                 )
             };
-            let body = resp.bytes().await;
-            match body {
-                Ok(bytes) => {
-                    let cached = ImageMetadata::new(content_type, length, last_mod).unwrap();
-                    let image = CachedImage(bytes);
-                    let resp = construct_response(&image, &cached);
-                    cache.lock().put(key, image, cached).await;
-                    return resp;
+
+            let body = resp.bytes_stream().map_err(|e| e.into());
+            let metadata = ImageMetadata::new(content_type, length, last_mod).unwrap();
+            let (stream, metadata) = {
+                match cache.lock().put(key, Box::new(body), metadata).await {
+                    Ok((stream, metadata)) => (stream, *metadata),
+                    Err(_) => todo!(),
                 }
-                Err(e) => {
-                    warn!("Got payload error from image server: {}", e);
-                    ServerResponse::HttpResponse(
-                        push_headers(&mut HttpResponse::ServiceUnavailable()).finish(),
-                    )
-                }
-            }
+            };
+
+            return construct_response(stream, &metadata);
         }
         Err(e) => {
             error!("Failed to fetch image from server: {}", e);
@@ -264,23 +260,22 @@ async fn fetch_image(
     }
 }
 
-fn construct_response(cached: &CachedImage, metadata: &ImageMetadata) -> ServerResponse {
-    let data: Vec<Result<Bytes, Infallible>> = cached
-        .0
-        .to_vec()
-        .chunks(1460) // TCP MSS default size
-        .map(|v| Ok(Bytes::from(v.to_vec())))
-        .collect();
+fn construct_response(
+    data: impl Stream<Item = Result<Bytes, UpstreamError>> + Unpin + 'static,
+    metadata: &ImageMetadata,
+) -> ServerResponse {
     let mut resp = HttpResponse::Ok();
-    if let Some(content_type) = &metadata.content_type {
+    if let Some(content_type) = metadata.content_type {
         resp.append_header((CONTENT_TYPE, content_type.as_ref()));
     }
-    if let Some(content_length) = &metadata.content_length {
-        resp.append_header((CONTENT_LENGTH, content_length.to_string()));
+
+    if let Some(content_length) = metadata.content_length {
+        resp.append_header((CONTENT_LENGTH, content_length));
     }
-    if let Some(last_modified) = &metadata.last_modified {
+
+    if let Some(last_modified) = metadata.last_modified {
         resp.append_header((LAST_MODIFIED, last_modified.to_rfc2822()));
     }
 
-    ServerResponse::HttpResponse(push_headers(&mut resp).streaming(stream::iter(data)))
+    ServerResponse::HttpResponse(push_headers(&mut resp).streaming(data))
 }

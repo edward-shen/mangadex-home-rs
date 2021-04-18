@@ -1,16 +1,14 @@
 //! Low memory caching stuff
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use async_trait::async_trait;
-use bytes::Bytes;
-use futures::Stream;
 use lru::LruCache;
 
-use super::{fs::FromFsStream, ByteStream, Cache, CacheKey};
+use super::{BoxedImageStream, Cache, CacheError, CacheKey, CacheStream, ImageMetadata};
 
 pub struct LowMemCache {
-    on_disk: LruCache<CacheKey, ()>,
+    on_disk: LruCache<CacheKey, ImageMetadata>,
     disk_path: PathBuf,
     disk_max_size: u64,
     disk_cur_size: u64,
@@ -27,21 +25,37 @@ impl LowMemCache {
     }
 }
 
+// todo: schedule eviction
+
 #[async_trait]
 impl Cache for LowMemCache {
-    async fn get_stream(&mut self, key: &CacheKey) -> Option<Result<FromFsStream, std::io::Error>> {
-        if self.on_disk.get(key).is_some() {
-            super::fs::read_file(Path::new(&key.to_string())).await
+    async fn get(
+        &mut self,
+        key: &CacheKey,
+    ) -> Option<Result<(CacheStream, &ImageMetadata), CacheError>> {
+        if let Some(metadata) = self.on_disk.get(key) {
+            let path = self.disk_path.clone().join(PathBuf::from(key.clone()));
+            super::fs::read_file(&path).await.map(|res| {
+                res.map(|stream| (CacheStream::Fs(stream), metadata))
+                    .map_err(Into::into)
+            })
         } else {
             None
         }
     }
 
-    async fn put_stream(
+    async fn put(
         &mut self,
         key: CacheKey,
-        image: ByteStream,
-    ) -> Result<FromFsStream, std::io::Error> {
-        super::fs::write_file(&PathBuf::from(key), image).await
+        image: BoxedImageStream,
+        metadata: ImageMetadata,
+    ) -> Result<(CacheStream, &ImageMetadata), CacheError> {
+        let path = self.disk_path.clone().join(PathBuf::from(key.clone()));
+        self.on_disk.put(key.clone(), metadata);
+        super::fs::write_file(&path, image)
+            .await
+            .map(CacheStream::Fs)
+            .map(move |stream| (stream, self.on_disk.get(&key).unwrap()))
+            .map_err(Into::into)
     }
 }
