@@ -188,11 +188,7 @@ impl Stream for MemStream {
     fn poll_next(mut self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let mut new_bytes = Bytes::new();
         std::mem::swap(&mut self.0, &mut new_bytes);
-        if new_bytes.is_empty() {
-            Poll::Ready(None)
-        } else {
-            Poll::Ready(Some(Ok(new_bytes)))
-        }
+        Poll::Ready(Some(Ok(new_bytes)))
     }
 }
 
