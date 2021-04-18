@@ -53,6 +53,8 @@ async fn main() -> Result<(), std::io::Error> {
 
     println!(concat!(
         env!("CARGO_PKG_NAME"),
+        " ",
+        env!("CARGO_PKG_VERSION"),
         "  Copyright (C) 2021  ",
         env!("CARGO_PKG_AUTHORS"),
         "\n\n",
