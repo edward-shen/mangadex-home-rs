@@ -1,4 +1,4 @@
-use actix_web::HttpResponse;
+use actix_web::error::PayloadError;
 use bytes::BytesMut;
 use futures::{Future, Stream, StreamExt};
 use once_cell::sync::Lazy;
@@ -161,7 +161,7 @@ impl Stream for FsStream {
 impl From<UpstreamError> for actix_web::Error {
     #[inline]
     fn from(_: UpstreamError) -> Self {
-        HttpResponse::BadGateway().finish().into()
+        PayloadError::Incomplete(None).into()
     }
 }
 

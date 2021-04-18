@@ -1,11 +1,11 @@
 use std::sync::atomic::Ordering;
 
-use actix_web::dev::HttpResponseBuilder;
 use actix_web::http::header::{
     ACCESS_CONTROL_ALLOW_ORIGIN, ACCESS_CONTROL_EXPOSE_HEADERS, CACHE_CONTROL, CONTENT_LENGTH,
     CONTENT_TYPE, LAST_MODIFIED, X_CONTENT_TYPE_OPTIONS,
 };
 use actix_web::web::Path;
+use actix_web::HttpResponseBuilder;
 use actix_web::{get, web::Data, HttpRequest, HttpResponse, Responder};
 use base64::DecodeError;
 use bytes::Bytes;
