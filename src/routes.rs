@@ -245,7 +245,12 @@ async fn fetch_image(
             let (stream, metadata) = {
                 match cache.lock().put(key, Box::new(body), metadata).await {
                     Ok((stream, metadata)) => (stream, *metadata),
-                    Err(_) => todo!(),
+                    Err(e) => {
+                        warn!("Failed to insert into cache: {}", e);
+                        return ServerResponse::HttpResponse(
+                            HttpResponse::InternalServerError().finish(),
+                        );
+                    }
                 }
             };
 
