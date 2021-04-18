@@ -1,6 +1,6 @@
 #![warn(clippy::pedantic, clippy::nursery)]
 // We're end users, so these is ok
-#![allow(clippy::future_not_send, clippy::module_name_repetitions)]
+#![allow(clippy::module_name_repetitions)]
 
 use std::env::{self, VarError};
 use std::process;
@@ -53,7 +53,9 @@ async fn main() -> Result<(), std::io::Error> {
 
     println!(concat!(
         env!("CARGO_PKG_NAME"),
-        "  Copyright (C) 2021  Edward Shen\n\n",
+        "  Copyright (C) 2021  ",
+        env!("CARGO_PKG_AUTHORS"),
+        "\n\n",
         env!("CARGO_PKG_NAME"),
         " is free software: you can redistribute it and/or modify\n\
         it under the terms of the GNU General Public License as published by\n\
@@ -76,10 +78,13 @@ async fn main() -> Result<(), std::io::Error> {
     let cache_path = cli_args.cache_path.clone();
     let low_mem_mode = cli_args.low_memory;
 
-    SimpleLogger::new()
-        .with_level(LevelFilter::Info)
-        .init()
-        .unwrap();
+    match cli_args.verbose {
+        0 => SimpleLogger::new().with_level(LevelFilter::Info),
+        1 => SimpleLogger::new().with_level(LevelFilter::Debug),
+        _ => SimpleLogger::new().with_level(LevelFilter::Trace),
+    }
+    .init()
+    .unwrap();
 
     let client_secret = if let Ok(v) = env::var("CLIENT_SECRET") {
         v

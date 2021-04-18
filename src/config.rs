@@ -37,4 +37,6 @@ pub struct CliArgs {
     pub enable_server_string: bool,
     #[clap(short, long, conflicts_with("memory-quota"), env = "LOW_MEMORY_MODE")]
     pub low_memory: bool,
+    #[clap(short, long, parse(from_occurrences))]
+    pub verbose: usize,
 }

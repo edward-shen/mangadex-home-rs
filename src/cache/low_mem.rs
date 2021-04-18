@@ -37,8 +37,11 @@ impl Cache for LowMemCache {
         }
     }
 
-    async fn put_stream(&mut self, key: CacheKey, image: ByteStream) {
-        // this call has a side effect and the returned future is for reading
-        let _ = super::fs::transparent_file_stream(&PathBuf::from(key), image);
+    async fn put_stream(
+        &mut self,
+        key: CacheKey,
+        image: ByteStream,
+    ) -> Result<FromFsStream, std::io::Error> {
+        super::fs::write_file(&PathBuf::from(key), image).await
     }
 }

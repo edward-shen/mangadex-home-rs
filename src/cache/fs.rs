@@ -9,10 +9,10 @@ use std::time::Duration;
 use bytes::{Bytes, BytesMut};
 use futures::{Future, Stream, StreamExt};
 use once_cell::sync::Lazy;
-use parking_lot::RwLock;
 use reqwest::Error;
 use tokio::fs::{remove_file, File};
 use tokio::io::{AsyncRead, AsyncWriteExt, ReadBuf};
+use tokio::sync::RwLock;
 use tokio::time::Sleep;
 
 /// Keeps track of files that are currently being written to.
@@ -39,6 +39,7 @@ pub async fn read_file(path: &Path) -> Option<Result<FromFsStream, std::io::Erro
     if path.exists() {
         let status = WRITING_STATUS
             .read()
+            .await
             .get(path)
             .map_or_else(|| Arc::new(CacheStatus::done()), Arc::clone);
 
@@ -50,14 +51,14 @@ pub async fn read_file(path: &Path) -> Option<Result<FromFsStream, std::io::Erro
 
 /// Maps the input byte stream into one that writes to disk instead, returning
 /// a stream that reads from disk instead.
-pub async fn transparent_file_stream(
+pub async fn write_file(
     path: &Path,
     mut byte_stream: impl Stream<Item = Result<Bytes, Error>> + Unpin + Send + 'static,
 ) -> Result<FromFsStream, std::io::Error> {
     let done_writing_flag = Arc::new(CacheStatus::new());
 
     let mut file = {
-        let mut write_lock = WRITING_STATUS.write();
+        let mut write_lock = WRITING_STATUS.write().await;
         let file = File::create(path).await?; // we need to make sure the file exists and is truncated.
         write_lock.insert(path.to_path_buf(), Arc::clone(&done_writing_flag));
         file
@@ -87,7 +88,7 @@ pub async fn transparent_file_stream(
             file.sync_all().await?; // we need metadata
         }
 
-        let mut write_lock = WRITING_STATUS.write();
+        let mut write_lock = WRITING_STATUS.write().await;
         // This needs to be written atomically with the write lock, else
         // it's possible we have an inconsistent state
         if errored {

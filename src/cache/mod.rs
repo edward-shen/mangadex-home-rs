@@ -147,7 +147,11 @@ pub trait Cache: Send + Sync {
         unimplemented!()
     }
 
-    async fn put_stream(&mut self, _key: CacheKey, _image: ByteStream) {
+    async fn put_stream(
+        &mut self,
+        _key: CacheKey,
+        _image: ByteStream,
+    ) -> Result<FromFsStream, std::io::Error> {
         unimplemented!()
     }
 }
