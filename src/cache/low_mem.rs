@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use async_trait::async_trait;
+use log::warn;
 use lru::LruCache;
 
 use super::{BoxedImageStream, Cache, CacheError, CacheKey, CacheStream, ImageMetadata};
@@ -24,8 +25,6 @@ impl LowMemCache {
         }
     }
 }
-
-// todo: schedule eviction
 
 #[async_trait]
 impl Cache for LowMemCache {
@@ -54,5 +53,9 @@ impl Cache for LowMemCache {
             .map(CacheStream::Fs)
             .map(move |stream| (stream, self.on_disk.get(&key).unwrap()))
             .map_err(Into::into)
+    }
+
+    async fn prune(&mut self) {
+        warn!("Trimming has not been implemented yet. Cache is unbounded!");
     }
 }

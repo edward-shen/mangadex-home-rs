@@ -130,24 +130,35 @@ async fn main() -> Result<(), std::io::Error> {
         }
     });
 
+    let cache: Box<dyn Cache> = if low_mem_mode {
+        Box::new(LowMemCache::new(disk_quota, cache_path.clone()))
+    } else {
+        Box::new(GenerationalCache::new(
+            memory_max_size,
+            disk_quota,
+            cache_path.clone(),
+        ))
+    };
+    let cache = Arc::new(Mutex::new(cache));
+    let cache1 = Arc::clone(&cache);
+
+    // Spawn periodic cache trimming
+    spawn(async move {
+        let mut interval = time::interval(Duration::from_secs(3 * 60));
+        loop {
+            interval.tick().await;
+            cache.lock().prune().await;
+        }
+    });
+
     // Start HTTPS server
     HttpServer::new(move || {
-        let cache: Box<dyn Cache> = if low_mem_mode {
-            Box::new(LowMemCache::new(disk_quota, cache_path.clone()))
-        } else {
-            Box::new(GenerationalCache::new(
-                memory_max_size,
-                disk_quota,
-                cache_path.clone(),
-            ))
-        };
-
         App::new()
             .service(routes::token_data)
             .service(routes::token_data_saver)
             .route("{tail:.*}", web::get().to(routes::default))
             .app_data(Data::from(Arc::clone(&data_1)))
-            .app_data(Data::new(Mutex::new(cache)))
+            .app_data(Data::from(Arc::clone(&cache1)))
     })
     .shutdown_timeout(60)
     .bind_rustls(format!("0.0.0.0:{}", port), tls_config)?
