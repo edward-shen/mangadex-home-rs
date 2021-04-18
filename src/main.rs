@@ -50,6 +50,26 @@ async fn main() -> Result<(), std::io::Error> {
     // It's ok to fail early here, it would imply we have a invalid config.
     dotenv::dotenv().ok();
     let cli_args = CliArgs::parse();
+
+    println!(concat!(
+        env!("CARGO_PKG_NAME"),
+        "  Copyright (C) 2021  Edward Shen\n\n",
+        env!("CARGO_PKG_NAME"),
+        " is free software: you can redistribute it and/or modify\n\
+        it under the terms of the GNU General Public License as published by\n\
+        the Free Software Foundation, either version 3 of the License, or\n\
+        (at your option) any later version.\n\n",
+        env!("CARGO_PKG_NAME"),
+        " is distributed in the hope that it will be useful,\n\
+        but WITHOUT ANY WARRANTY; without even the implied warranty of\n\
+        MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the\n\
+        GNU General Public License for more details.\n\n\
+        You should have received a copy of the GNU General Public License\n\
+        along with ",
+        env!("CARGO_PKG_NAME"),
+        ". If not, see <https://www.gnu.org/licenses/>.\n"
+    ));
+
     let port = cli_args.port;
     let memory_max_size = cli_args.memory_quota.get();
     let disk_quota = cli_args.disk_quota;
