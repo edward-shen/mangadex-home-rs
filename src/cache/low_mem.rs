@@ -33,15 +33,12 @@ impl Cache for LowMemCache {
         &mut self,
         key: &CacheKey,
     ) -> Option<Result<(CacheStream, &ImageMetadata), CacheError>> {
-        if let Some(metadata) = self.on_disk.get(key) {
-            let path = self.disk_path.clone().join(PathBuf::from(key.clone()));
-            super::fs::read_file(&path).await.map(|res| {
-                res.map(|stream| (CacheStream::Fs(stream), metadata))
-                    .map_err(Into::into)
-            })
-        } else {
-            None
-        }
+        let metadata = self.on_disk.get(key)?;
+        let path = self.disk_path.clone().join(PathBuf::from(key.clone()));
+        super::fs::read_file(&path).await.map(|res| {
+            res.map(|stream| (CacheStream::Fs(stream), metadata))
+                .map_err(Into::into)
+        })
     }
 
     async fn put(
