@@ -16,12 +16,13 @@ use cache::{Cache, GenerationalCache, LowMemCache};
 use clap::Clap;
 use config::CliArgs;
 use log::{debug, error, warn, LevelFilter};
-use parking_lot::{Mutex, RwLock};
+use parking_lot::RwLock;
 use rustls::{NoClientAuth, ServerConfig};
 use simple_logger::SimpleLogger;
 use state::{RwLockServerState, ServerState};
 use stop::send_stop;
 use thiserror::Error;
+use tokio::sync::RwLock as TokioRwLock;
 
 mod cache;
 mod config;
@@ -128,7 +129,7 @@ async fn main() -> Result<(), std::io::Error> {
             cache_path.clone(),
         ))
     };
-    let cache = Arc::new(Mutex::new(cache));
+    let cache = Arc::new(TokioRwLock::new(cache));
     let cache1 = Arc::clone(&cache);
 
     // Spawn periodic cache trimming
@@ -136,7 +137,7 @@ async fn main() -> Result<(), std::io::Error> {
         let mut interval = time::interval(Duration::from_secs(3 * 60));
         loop {
             interval.tick().await;
-            cache.lock().prune().await;
+            cache.write().await.prune().await;
         }
     });
 

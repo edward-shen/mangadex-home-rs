@@ -1,19 +1,13 @@
+use std::num::{NonZeroU16, NonZeroU64};
+use std::sync::atomic::Ordering;
 use std::{io::BufReader, sync::Arc};
-use std::{
-    num::{NonZeroU16, NonZeroU64},
-    sync::atomic::Ordering,
-};
 
-use log::{error, info, warn};
-use rustls::{
-    internal::pemfile::{certs, rsa_private_keys},
-    sign::RSASigningKey,
-};
-use rustls::{sign::SigningKey, Certificate};
-use serde::{
-    de::{MapAccess, Visitor},
-    Deserialize, Serialize,
-};
+use log::{debug, error, info, warn};
+use rustls::internal::pemfile::{certs, rsa_private_keys};
+use rustls::sign::{RSASigningKey, SigningKey};
+use rustls::Certificate;
+use serde::de::{MapAccess, Visitor};
+use serde::{Deserialize, Serialize};
 use sodiumoxide::crypto::box_::PrecomputedKey;
 use url::Url;
 
@@ -152,6 +146,7 @@ pub async fn update_server_state(secret: &str, cli: &CliArgs, data: &mut Arc<RwL
     match resp {
         Ok(resp) => match resp.json::<Response>().await {
             Ok(resp) => {
+                debug!("got write guard for server state");
                 let mut write_guard = data.0.write();
 
                 if !write_guard.url_overridden && write_guard.image_server != resp.image_server {
@@ -201,6 +196,8 @@ pub async fn update_server_state(secret: &str, cli: &CliArgs, data: &mut Arc<RwL
                 if resp.url != write_guard.url {
                     info!("This client's URL has been updated to {}", resp.url);
                 }
+
+                debug!("dropping write guard for server state");
             }
             Err(e) => warn!("Got malformed response: {}", e),
         },

@@ -12,10 +12,10 @@ use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use futures::{Stream, TryStreamExt};
 use log::{debug, error, info, warn};
-use parking_lot::Mutex;
 use serde::Deserialize;
 use sodiumoxide::crypto::box_::{open_precomputed, Nonce, PrecomputedKey, NONCEBYTES};
 use thiserror::Error;
+use tokio::sync::RwLock;
 
 use crate::cache::{Cache, CacheKey, ImageMetadata, UpstreamError};
 use crate::client_api_version;
@@ -51,7 +51,7 @@ impl Responder for ServerResponse {
 #[get("/{token}/data/{chapter_hash}/{file_name}")]
 async fn token_data(
     state: Data<RwLockServerState>,
-    cache: Data<Mutex<Box<dyn Cache>>>,
+    cache: Data<RwLock<Box<dyn Cache>>>,
     path: Path<(String, String, String)>,
 ) -> impl Responder {
     let (token, chapter_hash, file_name) = path.into_inner();
@@ -67,7 +67,7 @@ async fn token_data(
 #[get("/{token}/data-saver/{chapter_hash}/{file_name}")]
 async fn token_data_saver(
     state: Data<RwLockServerState>,
-    cache: Data<Mutex<Box<dyn Cache>>>,
+    cache: Data<RwLock<Box<dyn Cache>>>,
     path: Path<(String, String, String)>,
 ) -> impl Responder {
     let (token, chapter_hash, file_name) = path.into_inner();
@@ -183,16 +183,20 @@ fn push_headers(builder: &mut HttpResponseBuilder) -> &mut HttpResponseBuilder {
 
 async fn fetch_image(
     state: Data<RwLockServerState>,
-    cache: Data<Mutex<Box<dyn Cache>>>,
+    cache: Data<RwLock<Box<dyn Cache>>>,
     chapter_hash: String,
     file_name: String,
     is_data_saver: bool,
 ) -> ServerResponse {
     let key = CacheKey(chapter_hash, file_name, is_data_saver);
 
-    match cache.lock().get(&key).await {
-        Some(Ok((image, metadata))) => return construct_response(image, metadata),
-        Some(Err(_)) => return ServerResponse::HttpResponse(HttpResponse::BadGateway().finish()),
+    match cache.write().await.get(&key).await {
+        Some(Ok((image, metadata))) => {
+            return construct_response(image, metadata);
+        }
+        Some(Err(_)) => {
+            return ServerResponse::HttpResponse(HttpResponse::BadGateway().finish());
+        }
         _ => (),
     }
 
@@ -256,7 +260,7 @@ async fn fetch_image(
 
             let metadata = ImageMetadata::new(content_type, length, last_mod).unwrap();
             let (stream, metadata) = {
-                match cache.lock().put(key, Box::new(body), metadata).await {
+                match cache.write().await.put(key, Box::new(body), metadata).await {
                     Ok((stream, metadata)) => (stream, *metadata),
                     Err(e) => {
                         warn!("Failed to insert into cache: {}", e);

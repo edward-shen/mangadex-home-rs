@@ -132,7 +132,7 @@ impl ConcurrentFsStream {
         Ok(Self {
             file: Box::pin(File::open(path).await?),
             // 0.5ms
-            sleep: Box::pin(tokio::time::interval(Duration::from_micros(500))),
+            sleep: Box::pin(tokio::time::interval(Duration::from_micros(250))),
             is_file_done_writing: is_done,
         })
     }
@@ -172,7 +172,6 @@ impl Stream for ConcurrentFsStream {
                 bytes.truncate(filled);
                 polled_result.map(|_| {
                     if bytes.is_empty() {
-                        dbg!(line!());
                         None
                     } else {
                         Some(Ok(bytes.into()))
