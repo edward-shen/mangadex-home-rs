@@ -68,7 +68,7 @@ impl<'a> From<(&'a str, &CliArgs)> for Request<'a> {
 pub struct Response {
     pub image_server: Url,
     pub latest_build: usize,
-    pub url: String,
+    pub url: Url,
     pub token_key: Option<String>,
     pub compromised: bool,
     pub paused: bool,
@@ -145,8 +145,8 @@ impl std::fmt::Debug for Tls {
     }
 }
 
-pub async fn update_server_state(secret: &str, req: &CliArgs, data: &mut Arc<RwLockServerState>) {
-    let req = Request::from_config_and_state(secret, req, data);
+pub async fn update_server_state(secret: &str, cli: &CliArgs, data: &mut Arc<RwLockServerState>) {
+    let req = Request::from_config_and_state(secret, cli, data);
     let client = reqwest::Client::new();
     let resp = client.post(CONTROL_CENTER_PING_URL).json(&req).send().await;
     match resp {
@@ -154,7 +154,10 @@ pub async fn update_server_state(secret: &str, req: &CliArgs, data: &mut Arc<RwL
             Ok(resp) => {
                 let mut write_guard = data.0.write();
 
-                write_guard.image_server = resp.image_server;
+                if !write_guard.url_overridden && write_guard.image_server != resp.image_server {
+                    warn!("Ignoring new upstream url!");
+                    write_guard.image_server = resp.image_server;
+                }
 
                 if let Some(key) = resp.token_key {
                     if let Some(key) = base64::decode(&key)
@@ -167,7 +170,9 @@ pub async fn update_server_state(secret: &str, req: &CliArgs, data: &mut Arc<RwL
                     }
                 }
 
-                if VALIDATE_TOKENS.load(Ordering::Acquire) != resp.force_tokens {
+                if !cli.disable_token_validation
+                    && VALIDATE_TOKENS.load(Ordering::Acquire) != resp.force_tokens
+                {
                     if resp.force_tokens {
                         info!("Client received command to enforce token validity.");
                     } else {

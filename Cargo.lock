@@ -1000,6 +1000,7 @@ dependencies = [
  "ssri",
  "thiserror",
  "tokio",
+ "tokio-util",
  "url",
 ]
 

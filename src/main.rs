@@ -51,29 +51,6 @@ async fn main() -> Result<(), std::io::Error> {
     dotenv::dotenv().ok();
     let cli_args = CliArgs::parse();
 
-    println!(concat!(
-        env!("CARGO_PKG_NAME"),
-        " ",
-        env!("CARGO_PKG_VERSION"),
-        "  Copyright (C) 2021  ",
-        env!("CARGO_PKG_AUTHORS"),
-        "\n\n",
-        env!("CARGO_PKG_NAME"),
-        " is free software: you can redistribute it and/or modify\n\
-        it under the terms of the GNU General Public License as published by\n\
-        the Free Software Foundation, either version 3 of the License, or\n\
-        (at your option) any later version.\n\n",
-        env!("CARGO_PKG_NAME"),
-        " is distributed in the hope that it will be useful,\n\
-        but WITHOUT ANY WARRANTY; without even the implied warranty of\n\
-        MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the\n\
-        GNU General Public License for more details.\n\n\
-        You should have received a copy of the GNU General Public License\n\
-        along with ",
-        env!("CARGO_PKG_NAME"),
-        ". If not, see <https://www.gnu.org/licenses/>.\n"
-    ));
-
     let port = cli_args.port;
     let memory_max_size = cli_args.memory_quota.get();
     let disk_quota = cli_args.disk_quota;
@@ -87,6 +64,8 @@ async fn main() -> Result<(), std::io::Error> {
     }
     .init()
     .unwrap();
+
+    print_preamble_and_warnings();
 
     let client_secret = if let Ok(v) = env::var("CLIENT_SECRET") {
         v
@@ -111,13 +90,21 @@ async fn main() -> Result<(), std::io::Error> {
 
     // Set ctrl+c to send a stop message
     let running = Arc::new(AtomicBool::new(true));
-    let r = running.clone();
+    let running_1 = running.clone();
+    let system = System::current();
     ctrlc::set_handler(move || {
+        let system = &system;
         let client_secret = client_secret.clone();
+        let running_2 = Arc::clone(&running_1);
         System::new().block_on(async move {
-            send_stop(&client_secret).await;
+            if running_2.load(Ordering::SeqCst) {
+                send_stop(&client_secret).await;
+            } else {
+                warn!("Got second ctrl-c, forcefully exiting");
+                system.stop()
+            }
         });
-        r.store(false, Ordering::SeqCst);
+        running_1.store(false, Ordering::SeqCst);
     })
     .expect("Error setting Ctrl-C handler");
 
@@ -173,4 +160,29 @@ async fn main() -> Result<(), std::io::Error> {
     }
 
     Ok(())
+}
+
+fn print_preamble_and_warnings() {
+    println!(concat!(
+        env!("CARGO_PKG_NAME"),
+        " ",
+        env!("CARGO_PKG_VERSION"),
+        "  Copyright (C) 2021  ",
+        env!("CARGO_PKG_AUTHORS"),
+        "\n\n",
+        env!("CARGO_PKG_NAME"),
+        " is free software: you can redistribute it and/or modify\n\
+        it under the terms of the GNU General Public License as published by\n\
+        the Free Software Foundation, either version 3 of the License, or\n\
+        (at your option) any later version.\n\n",
+        env!("CARGO_PKG_NAME"),
+        " is distributed in the hope that it will be useful,\n\
+        but WITHOUT ANY WARRANTY; without even the implied warranty of\n\
+        MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the\n\
+        GNU General Public License for more details.\n\n\
+        You should have received a copy of the GNU General Public License\n\
+        along with ",
+        env!("CARGO_PKG_NAME"),
+        ". If not, see <https://www.gnu.org/licenses/>.\n"
+    ));
 }

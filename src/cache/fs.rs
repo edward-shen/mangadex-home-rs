@@ -1,20 +1,22 @@
 use actix_web::error::PayloadError;
-use bytes::BytesMut;
-use futures::{Future, Stream, StreamExt};
+use futures::{Stream, StreamExt};
+use log::debug;
 use once_cell::sync::Lazy;
+use std::collections::HashMap;
+use std::fmt::Display;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
-use std::{collections::HashMap, fmt::Display};
-use tokio::fs::{remove_file, File};
+use tokio::fs::{create_dir_all, remove_file, File};
 use tokio::io::{AsyncRead, AsyncWriteExt, ReadBuf};
 use tokio::sync::RwLock;
-use tokio::time::Sleep;
+use tokio::time::Interval;
+use tokio_util::codec::{BytesCodec, FramedRead};
 
-use super::{BoxedImageStream, CacheStreamItem};
+use super::{BoxedImageStream, CacheStream, CacheStreamItem};
 
 /// Keeps track of files that are currently being written to.
 ///
@@ -36,15 +38,23 @@ static WRITING_STATUS: Lazy<RwLock<HashMap<PathBuf, Arc<CacheStatus>>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 
 /// Tries to read from the file, returning a byte stream if it exists
-pub async fn read_file(path: &Path) -> Option<Result<FsStream, std::io::Error>> {
+pub async fn read_file(path: &Path) -> Option<Result<CacheStream, std::io::Error>> {
     if path.exists() {
-        let status = WRITING_STATUS
-            .read()
-            .await
-            .get(path)
-            .map_or_else(|| Arc::new(CacheStatus::done()), Arc::clone);
+        let status = WRITING_STATUS.read().await.get(path).map(Arc::clone);
 
-        Some(FsStream::new(path, status).await)
+        if let Some(status) = status {
+            Some(
+                ConcurrentFsStream::new(path, status)
+                    .await
+                    .map(CacheStream::Concurrent),
+            )
+        } else {
+            Some(
+                File::open(path)
+                    .await
+                    .map(|f| CacheStream::Completed(FramedRead::new(f, BytesCodec::new()))),
+            )
+        }
     } else {
         None
     }
@@ -55,11 +65,13 @@ pub async fn read_file(path: &Path) -> Option<Result<FsStream, std::io::Error>> 
 pub async fn write_file(
     path: &Path,
     mut byte_stream: BoxedImageStream,
-) -> Result<FsStream, std::io::Error> {
+) -> Result<CacheStream, std::io::Error> {
     let done_writing_flag = Arc::new(CacheStatus::new());
 
     let mut file = {
         let mut write_lock = WRITING_STATUS.write().await;
+        let parent = path.parent().unwrap();
+        create_dir_all(parent).await?;
         let file = File::create(path).await?; // we need to make sure the file exists and is truncated.
         write_lock.insert(path.to_path_buf(), Arc::clone(&done_writing_flag));
         file
@@ -87,6 +99,7 @@ pub async fn write_file(
         } else {
             file.flush().await?;
             file.sync_all().await?; // we need metadata
+            debug!("writing to file done");
         }
 
         let mut write_lock = WRITING_STATUS.write().await;
@@ -103,21 +116,23 @@ pub async fn write_file(
         Ok::<_, std::io::Error>(())
     });
 
-    Ok(FsStream::new(path, done_writing_flag).await?)
+    Ok(CacheStream::Concurrent(
+        ConcurrentFsStream::new(path, done_writing_flag).await?,
+    ))
 }
 
-pub struct FsStream {
+pub struct ConcurrentFsStream {
     file: Pin<Box<File>>,
-    sleep: Pin<Box<Sleep>>,
+    sleep: Pin<Box<Interval>>,
     is_file_done_writing: Arc<CacheStatus>,
 }
 
-impl FsStream {
+impl ConcurrentFsStream {
     async fn new(path: &Path, is_done: Arc<CacheStatus>) -> Result<Self, std::io::Error> {
         Ok(Self {
             file: Box::pin(File::open(path).await?),
             // 0.5ms
-            sleep: Box::pin(tokio::time::sleep(Duration::from_micros(500))),
+            sleep: Box::pin(tokio::time::interval(Duration::from_micros(500))),
             is_file_done_writing: is_done,
         })
     }
@@ -135,25 +150,35 @@ impl Display for UpstreamError {
     }
 }
 
-impl Stream for FsStream {
+impl Stream for ConcurrentFsStream {
     type Item = CacheStreamItem;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let status = self.is_file_done_writing.load();
 
-        let mut bytes = BytesMut::with_capacity(1460);
+        let mut bytes = [0; 1460].to_vec();
         let mut buffer = ReadBuf::new(&mut bytes);
         let polled_result = self.file.as_mut().poll_read(cx, &mut buffer);
-
-        match (status, buffer.filled().len()) {
+        let filled = buffer.filled().len();
+        match (status, filled) {
             // Prematurely reached EOF, schedule a poll in the future
             (WritingStatus::NotDone, 0) => {
-                let _ = self.sleep.as_mut().poll(cx);
+                let _ = self.sleep.as_mut().poll_tick(cx);
                 Poll::Pending
             }
             // We got an error, abort the read.
             (WritingStatus::Error, _) => Poll::Ready(Some(Err(UpstreamError))),
-            _ => polled_result.map(|_| Some(Ok(bytes.split().into()))),
+            _ => {
+                bytes.truncate(filled);
+                polled_result.map(|_| {
+                    if bytes.is_empty() {
+                        dbg!(line!());
+                        None
+                    } else {
+                        Some(Ok(bytes.into()))
+                    }
+                })
+            }
         }
     }
 }
@@ -174,11 +199,6 @@ impl CacheStatus {
     }
 
     #[inline]
-    const fn done() -> Self {
-        Self(AtomicU8::new(WritingStatus::Done as u8))
-    }
-
-    #[inline]
     fn store(&self, status: WritingStatus) {
         self.0.store(status as u8, Ordering::Release);
     }
@@ -189,6 +209,7 @@ impl CacheStatus {
     }
 }
 
+#[derive(Debug)]
 enum WritingStatus {
     NotDone = 0,
     Done,

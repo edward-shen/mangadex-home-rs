@@ -11,7 +11,7 @@ use base64::DecodeError;
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use futures::{Stream, TryStreamExt};
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use parking_lot::Mutex;
 use serde::Deserialize;
 use sodiumoxide::crypto::box_::{open_precomputed, Nonce, PrecomputedKey, NONCEBYTES};
@@ -76,6 +76,7 @@ async fn token_data_saver(
             return ServerResponse::TokenValidationError(e);
         }
     }
+
     fetch_image(state, cache, chapter_hash, file_name, true).await
 }
 
@@ -86,7 +87,13 @@ pub async fn default(state: Data<RwLockServerState>, req: HttpRequest) -> impl R
         req.path().chars().skip(1).collect::<String>()
     );
     info!("Got unknown path, just proxying: {}", path);
-    let resp = reqwest::get(path).await.unwrap();
+    let resp = match reqwest::get(path).await {
+        Ok(resp) => resp,
+        Err(e) => {
+            error!("{}", e);
+            return ServerResponse::HttpResponse(HttpResponse::BadGateway().finish());
+        }
+    };
     let content_type = resp.headers().get(CONTENT_TYPE);
     let mut resp_builder = HttpResponseBuilder::new(resp.status());
     if let Some(content_type) = content_type {
@@ -153,6 +160,8 @@ fn validate_token(
         return Err(TokenValidationError::InvalidChapterHash);
     }
 
+    debug!("Token validated!");
+
     Ok(())
 }
 
@@ -194,15 +203,15 @@ async fn fetch_image(
         reqwest::get(format!(
             "{}/data-saver/{}/{}",
             state.0.read().image_server,
-            &key.1,
-            &key.2
+            &key.0,
+            &key.1
         ))
     } else {
         reqwest::get(format!(
             "{}/data/{}/{}",
             state.0.read().image_server,
-            &key.1,
-            &key.2
+            &key.0,
+            &key.1
         ))
     }
     .await;
@@ -214,6 +223,7 @@ async fn fetch_image(
             let is_image = content_type
                 .map(|v| String::from_utf8_lossy(v.as_ref()).contains("image/"))
                 .unwrap_or_default();
+
             if resp.status() != 200 || !is_image {
                 warn!(
                     "Got non-OK or non-image response code from upstream, proxying and not caching result.",
@@ -241,6 +251,9 @@ async fn fetch_image(
             };
 
             let body = resp.bytes_stream().map_err(|e| e.into());
+
+            debug!("Inserting into cache");
+
             let metadata = ImageMetadata::new(content_type, length, last_mod).unwrap();
             let (stream, metadata) = {
                 match cache.lock().put(key, Box::new(body), metadata).await {
@@ -253,6 +266,8 @@ async fn fetch_image(
                     }
                 }
             };
+
+            debug!("Done putting into cache");
 
             return construct_response(stream, &metadata);
         }
@@ -269,6 +284,8 @@ fn construct_response(
     data: impl Stream<Item = Result<Bytes, UpstreamError>> + Unpin + 'static,
     metadata: &ImageMetadata,
 ) -> ServerResponse {
+    debug!("Constructing response");
+
     let mut resp = HttpResponse::Ok();
     if let Some(content_type) = metadata.content_type {
         resp.append_header((CONTENT_TYPE, content_type.as_ref()));

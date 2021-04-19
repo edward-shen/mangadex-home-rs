@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 
 use clap::{crate_authors, crate_description, crate_version, Clap};
+use url::Url;
 
 // Validate tokens is an atomic because it's faster than locking on rwlock.
 pub static VALIDATE_TOKENS: AtomicBool = AtomicBool::new(false);
@@ -42,7 +43,20 @@ pub struct CliArgs {
         env = "LOW_MEMORY_MODE",
         takes_value = false
     )]
+    /// Changes the caching behavior to avoid buffering images in memory, and
+    /// instead use the filesystem as the buffer backing. This is useful for
+    /// clients in low (< 1GB) RAM environments.
     pub low_memory: bool,
+    /// Changes verbosity. Default verbosity is INFO, while increasing counts
+    /// of verbose flags increases to DEBUG and TRACE, respectively.
     #[clap(short, long, parse(from_occurrences))]
     pub verbose: usize,
+    /// Overrides the upstream URL to fetch images from. Don't use this unless
+    /// you know what you're dealing with.
+    #[clap(long)]
+    pub override_upstream: Option<Url>,
+    /// Disables token validation. Don't use this unless you know the
+    /// ramifications of this command.
+    #[clap(long)]
+    pub disable_token_validation: bool,
 }

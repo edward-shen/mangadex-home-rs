@@ -8,7 +8,7 @@ use actix_web::http::HeaderValue;
 use async_trait::async_trait;
 use bytes::Bytes;
 use chrono::{DateTime, FixedOffset};
-use fs::FsStream;
+use fs::ConcurrentFsStream;
 use futures::{Stream, StreamExt};
 use log::debug;
 use thiserror::Error;
@@ -16,6 +16,8 @@ use thiserror::Error;
 pub use fs::UpstreamError;
 pub use generational::GenerationalCache;
 pub use low_mem::LowMemCache;
+use tokio::fs::File;
+use tokio_util::codec::{BytesCodec, FramedRead};
 
 mod fs;
 mod generational;
@@ -163,8 +165,9 @@ pub trait Cache: Send + Sync {
 }
 
 pub enum CacheStream {
-    Fs(FsStream),
+    Concurrent(ConcurrentFsStream),
     Memory(MemStream),
+    Completed(FramedRead<File, BytesCodec>),
 }
 
 impl From<CachedImage> for CacheStream {
@@ -180,8 +183,12 @@ impl Stream for CacheStream {
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match self.get_mut() {
-            Self::Fs(stream) => stream.poll_next_unpin(cx),
+            Self::Concurrent(stream) => stream.poll_next_unpin(cx),
             Self::Memory(stream) => stream.poll_next_unpin(cx),
+            Self::Completed(stream) => stream
+                .poll_next_unpin(cx)
+                .map_ok(|v| v.freeze())
+                .map_err(|_| UpstreamError),
         }
     }
 }
@@ -192,9 +199,12 @@ impl Stream for MemStream {
     type Item = CacheStreamItem;
 
     fn poll_next(mut self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let mut new_bytes = Bytes::new();
-        std::mem::swap(&mut self.0, &mut new_bytes);
-        Poll::Ready(Some(Ok(new_bytes)))
+        let new_bytes = self.0.split_to(1460);
+        if new_bytes.is_empty() {
+            Poll::Ready(None)
+        } else {
+            Poll::Ready(Some(Ok(new_bytes)))
+        }
     }
 }
 

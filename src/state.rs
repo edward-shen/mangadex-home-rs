@@ -13,7 +13,8 @@ pub struct ServerState {
     pub precomputed_key: PrecomputedKey,
     pub image_server: Url,
     pub tls_config: Tls,
-    pub url: String,
+    pub url: Url,
+    pub url_overridden: bool,
     pub log_state: LogState,
 }
 
@@ -36,7 +37,7 @@ impl ServerState {
 
         match resp {
             Ok(resp) => match resp.json::<Response>().await {
-                Ok(resp) => {
+                Ok(mut resp) => {
                     let key = resp
                         .token_key
                         .and_then(|key| {
@@ -60,21 +61,31 @@ impl ServerState {
                         warn!("Control center has paused this node!");
                     }
 
-                    info!("This client's URL has been set to {}", resp.url);
-
-                    if resp.force_tokens {
-                        info!("This client will validate tokens.");
+                    if let Some(ref override_url) = config.override_upstream {
+                        resp.image_server = override_url.clone();
+                        warn!("Upstream URL overridden to: {}", resp.image_server);
                     } else {
-                        info!("This client will not validate tokens.");
                     }
 
-                    VALIDATE_TOKENS.store(resp.force_tokens, Ordering::Release);
+                    info!("This client's URL has been set to {}", resp.url);
+
+                    if config.disable_token_validation {
+                        warn!("Token validation is explicitly disabled!");
+                    } else {
+                        if resp.force_tokens {
+                            info!("This client will validate tokens.");
+                        } else {
+                            info!("This client will not validate tokens.");
+                        }
+                        VALIDATE_TOKENS.store(resp.force_tokens, Ordering::Release);
+                    }
 
                     Ok(Self {
                         precomputed_key: key,
                         image_server: resp.image_server,
                         tls_config: resp.tls.unwrap(),
                         url: resp.url,
+                        url_overridden: config.override_upstream.is_some(),
                         log_state: LogState {
                             was_paused_before: resp.paused,
                         },
