@@ -18,6 +18,10 @@ pub struct LowMemCache {
 }
 
 impl LowMemCache {
+    /// Constructs a new low memory cache at the provided path and capacity.
+    /// This internally spawns a task that will wait for filesystem
+    /// notifications when a file has been written.
+    #[allow(clippy::new_ret_no_self)]
     pub fn new(disk_max_size: u64, disk_path: PathBuf) -> Arc<RwLock<Box<dyn Cache>>> {
         let (tx, mut rx) = unbounded_channel();
         let new_self: Arc<RwLock<Box<dyn Cache>>> = Arc::new(RwLock::new(Box::new(Self {
@@ -28,19 +32,17 @@ impl LowMemCache {
             master_sender: tx,
         })));
 
+        // Spawns a new task that continuously listens for events received by
+        // the channel, which informs the low memory cache the total size of the
+        // item that was put into the cache.
         let new_self_0 = Arc::clone(&new_self);
         tokio::spawn(async move {
-            loop {
-                let new_size = match rx.recv().await {
-                    Some(v) => v,
-                    None => break,
-                };
-
+            while let Some(new_size) = rx.recv().await {
                 new_self_0.write().await.increase_usage(new_size).await;
             }
         });
 
-        new_self.clone()
+        new_self
     }
 
     async fn prune(&mut self) {
@@ -75,6 +77,8 @@ impl Cache for LowMemCache {
             .map_err(Into::into)
     }
 
+    /// Increments the internal size counter, pruning if the value exceeds the
+    /// user-defined capacity.
     async fn increase_usage(&mut self, amt: u64) {
         self.disk_cur_size += amt;
         if self.disk_cur_size > self.disk_max_size {

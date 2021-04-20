@@ -6,7 +6,7 @@ use std::task::{Context, Poll};
 
 use actix_web::http::HeaderValue;
 use async_trait::async_trait;
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use chrono::{DateTime, FixedOffset};
 use fs::ConcurrentFsStream;
 use futures::{Stream, StreamExt};
@@ -88,6 +88,7 @@ impl AsRef<str> for ImageContentType {
     }
 }
 
+#[allow(clippy::pub_enum_variant_names)]
 #[derive(Debug)]
 pub enum ImageRequestError {
     InvalidContentType,
@@ -184,7 +185,7 @@ impl Stream for CacheStream {
             Self::Memory(stream) => stream.poll_next_unpin(cx),
             Self::Completed(stream) => stream
                 .poll_next_unpin(cx)
-                .map_ok(|v| v.freeze())
+                .map_ok(BytesMut::freeze)
                 .map_err(|_| UpstreamError),
         }
     }
