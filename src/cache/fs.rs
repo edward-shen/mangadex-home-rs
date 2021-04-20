@@ -181,7 +181,8 @@ impl Stream for ConcurrentFsStream {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         // First, try to read from the file...
 
-        let mut bytes = [0; 1460].to_vec();
+        // TODO: Might be more efficient to have a larger buffer
+        let mut bytes = [0; 8 * 1024].to_vec();
         let mut buffer = ReadBuf::new(&mut bytes);
         match self.file.as_mut().poll_read(cx, &mut buffer) {
             Poll::Ready(Ok(_)) => (),
@@ -198,7 +199,8 @@ impl Stream for ConcurrentFsStream {
             // 1. We are actually done.
             // 2. We read to the EOF while the writer is still writing to it.
 
-            // To handle the second case, we need to see the status the writer:
+            // To handle the second case, we need to see the status of the
+            // writer, and if it's done writing yet.
 
             if let Poll::Ready(Some(WritingStatus::Done(n))) =
                 self.receiver.as_mut().poll_next_unpin(cx)
@@ -227,6 +229,7 @@ impl Stream for ConcurrentFsStream {
         } else {
             // We have data! Give it to the reader!
             self.bytes_read += filled as u64;
+            bytes.truncate(filled);
             Poll::Ready(Some(Ok(bytes.into())))
         }
     }
