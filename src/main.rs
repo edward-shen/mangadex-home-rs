@@ -58,13 +58,17 @@ async fn main() -> Result<(), std::io::Error> {
     let cache_path = cli_args.cache_path.clone();
     let low_mem_mode = cli_args.low_memory;
 
-    match cli_args.verbose {
-        0 => SimpleLogger::new().with_level(LevelFilter::Info),
-        1 => SimpleLogger::new().with_level(LevelFilter::Debug),
-        _ => SimpleLogger::new().with_level(LevelFilter::Trace),
-    }
-    .init()
-    .unwrap();
+    let log_level = match (cli_args.quiet, cli_args.verbose) {
+        (n, _) if n > 2 => LevelFilter::Off,
+        (2, _) => LevelFilter::Error,
+        (1, _) => LevelFilter::Warn,
+        (0, 0) => LevelFilter::Info,
+        (_, 1) => LevelFilter::Debug,
+        (_, n) if n > 1 => LevelFilter::Trace,
+        _ => unreachable!(),
+    };
+
+    SimpleLogger::new().with_level(log_level).init().unwrap();
 
     print_preamble_and_warnings();
 

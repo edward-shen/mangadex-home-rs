@@ -47,10 +47,15 @@ pub struct CliArgs {
     /// instead use the filesystem as the buffer backing. This is useful for
     /// clients in low (< 1GB) RAM environments.
     pub low_memory: bool,
-    /// Changes verbosity. Default verbosity is INFO, while increasing counts
-    /// of verbose flags increases to DEBUG and TRACE, respectively.
+    /// Changes verbosity. Default verbosity is INFO, while increasing counts of
+    /// verbose flags increases the verbosity to DEBUG and TRACE, respectively.
     #[clap(short, long, parse(from_occurrences))]
     pub verbose: usize,
+    /// Changes verbosity. Default verbosity is INFO, while increasing counts of
+    /// quiet flags decreases the verbosity to WARN, ERROR, and no logs,
+    /// respectively.
+    #[clap(short, long, parse(from_occurrences), conflicts_with = "verbose")]
+    pub quiet: usize,
     /// Overrides the upstream URL to fetch images from. Don't use this unless
     /// you know what you're dealing with.
     #[clap(long)]
