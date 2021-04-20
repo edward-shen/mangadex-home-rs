@@ -1,10 +1,11 @@
 //! Low memory caching stuff
 
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 use async_trait::async_trait;
-use log::warn;
 use lru::LruCache;
+use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
+use tokio::sync::RwLock;
 
 use super::{BoxedImageStream, Cache, CacheError, CacheKey, CacheStream, ImageMetadata};
 
@@ -13,16 +14,37 @@ pub struct LowMemCache {
     disk_path: PathBuf,
     disk_max_size: u64,
     disk_cur_size: u64,
+    master_sender: UnboundedSender<u64>,
 }
 
 impl LowMemCache {
-    pub fn new(disk_max_size: u64, disk_path: PathBuf) -> Self {
-        Self {
+    pub fn new(disk_max_size: u64, disk_path: PathBuf) -> Arc<RwLock<Box<dyn Cache>>> {
+        let (tx, mut rx) = unbounded_channel();
+        let new_self: Arc<RwLock<Box<dyn Cache>>> = Arc::new(RwLock::new(Box::new(Self {
             on_disk: LruCache::unbounded(),
             disk_path,
             disk_max_size,
             disk_cur_size: 0,
-        }
+            master_sender: tx,
+        })));
+
+        let new_self_0 = Arc::clone(&new_self);
+        tokio::spawn(async move {
+            loop {
+                let new_size = match rx.recv().await {
+                    Some(v) => v,
+                    None => break,
+                };
+
+                new_self_0.write().await.increase_usage(new_size).await;
+            }
+        });
+
+        new_self.clone()
+    }
+
+    async fn prune(&mut self) {
+        todo!()
     }
 }
 
@@ -47,13 +69,16 @@ impl Cache for LowMemCache {
     ) -> Result<(CacheStream, &ImageMetadata), CacheError> {
         let path = self.disk_path.clone().join(PathBuf::from(key.clone()));
         self.on_disk.put(key.clone(), metadata);
-        super::fs::write_file(&path, image)
+        super::fs::write_file(&path, image, self.master_sender.clone())
             .await
             .map(move |stream| (stream, self.on_disk.get(&key).unwrap()))
             .map_err(Into::into)
     }
 
-    async fn prune(&mut self) {
-        warn!("Trimming has not been implemented yet. Cache is unbounded!");
+    async fn increase_usage(&mut self, amt: u64) {
+        self.disk_cur_size += amt;
+        if self.disk_cur_size > self.disk_max_size {
+            self.prune().await;
+        }
     }
 }

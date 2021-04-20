@@ -120,26 +120,17 @@ async fn main() -> Result<(), std::io::Error> {
         }
     });
 
-    let cache: Box<dyn Cache> = if low_mem_mode {
-        Box::new(LowMemCache::new(disk_quota, cache_path.clone()))
+    let cache: Arc<TokioRwLock<Box<dyn Cache>>> = if low_mem_mode {
+        LowMemCache::new(disk_quota, cache_path.clone())
     } else {
-        Box::new(GenerationalCache::new(
+        Arc::new(TokioRwLock::new(Box::new(GenerationalCache::new(
             memory_max_size,
             disk_quota,
             cache_path.clone(),
-        ))
+        ))))
     };
-    let cache = Arc::new(TokioRwLock::new(cache));
+    let cache = Arc::clone(&cache);
     let cache1 = Arc::clone(&cache);
-
-    // Spawn periodic cache trimming
-    spawn(async move {
-        let mut interval = time::interval(Duration::from_secs(3 * 60));
-        loop {
-            interval.tick().await;
-            cache.write().await.prune().await;
-        }
-    });
 
     // Start HTTPS server
     HttpServer::new(move || {

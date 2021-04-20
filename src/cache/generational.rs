@@ -239,4 +239,7 @@ impl Cache for GenerationalCache {
 
         self.get(&key).await.unwrap()
     }
+
+    // noop
+    async fn increase_usage(&mut self, _amt: u64) {}
 }

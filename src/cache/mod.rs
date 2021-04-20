@@ -10,7 +10,6 @@ use bytes::Bytes;
 use chrono::{DateTime, FixedOffset};
 use fs::ConcurrentFsStream;
 use futures::{Stream, StreamExt};
-use log::debug;
 use thiserror::Error;
 
 pub use fs::UpstreamError;
@@ -159,9 +158,7 @@ pub trait Cache: Send + Sync {
         metadata: ImageMetadata,
     ) -> Result<(CacheStream, &ImageMetadata), CacheError>;
 
-    async fn prune(&mut self) {
-        debug!("Would trim but cache does not implement trimming!");
-    }
+    async fn increase_usage(&mut self, amt: u64);
 }
 
 pub enum CacheStream {
