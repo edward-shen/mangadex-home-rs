@@ -1,11 +1,13 @@
 //! Low memory caching stuff
 
+use std::str::FromStr;
 use std::sync::{atomic::Ordering, Arc};
 use std::{path::PathBuf, sync::atomic::AtomicU64};
 
 use async_trait::async_trait;
 use futures::StreamExt;
-use sqlx::SqlitePool;
+use log::LevelFilter;
+use sqlx::{sqlite::SqliteConnectOptions, ConnectOptions, SqlitePool};
 use tokio::sync::mpsc::{channel, unbounded_channel, Sender, UnboundedSender};
 use tokio_stream::wrappers::ReceiverStream;
 
@@ -33,11 +35,12 @@ impl LowMemCache {
         let (file_size_tx, mut file_size_rx) = unbounded_channel();
         let (db_tx, db_rx) = channel(128);
         let db_pool = {
-            let db_url = format!(
-                "sqlite:{}/metadata.sqlite?mode=rwc",
-                disk_path.to_str().unwrap()
-            );
-            let db = SqlitePool::connect(&db_url).await.unwrap();
+            let db_url = format!("sqlite:{}/metadata.sqlite", disk_path.to_str().unwrap());
+            let mut options = SqliteConnectOptions::from_str(&db_url)
+                .unwrap()
+                .create_if_missing(true);
+            options.log_statements(LevelFilter::Debug);
+            let db = SqlitePool::connect_with(options).await.unwrap();
 
             // Run db init
             sqlx::query_file!("./db_queries/init.sql")
