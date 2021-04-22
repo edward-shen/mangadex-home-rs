@@ -39,7 +39,7 @@ impl LowMemCache {
             let mut options = SqliteConnectOptions::from_str(&db_url)
                 .unwrap()
                 .create_if_missing(true);
-            options.log_statements(LevelFilter::Debug);
+            options.log_statements(LevelFilter::Trace);
             let db = SqlitePool::connect_with(options).await.unwrap();
 
             // Run db init
