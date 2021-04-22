@@ -124,14 +124,14 @@ async fn main() -> Result<(), std::io::Error> {
         }
     });
 
-    let cache: Arc<TokioRwLock<Box<dyn Cache>>> = if low_mem_mode {
-        LowMemCache::new(disk_quota, cache_path.clone())
+    let cache: Arc<Box<dyn Cache>> = if low_mem_mode {
+        LowMemCache::new(disk_quota, cache_path.clone()).await
     } else {
-        Arc::new(TokioRwLock::new(Box::new(GenerationalCache::new(
+        Arc::new(Box::new(GenerationalCache::new(
             memory_max_size,
             disk_quota,
             cache_path.clone(),
-        ))))
+        )))
     };
     let cache = Arc::clone(&cache);
     let cache1 = Arc::clone(&cache);

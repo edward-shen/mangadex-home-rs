@@ -3,11 +3,13 @@ use bytes::{Buf, Bytes};
 use futures::{Stream, StreamExt};
 use log::{debug, error};
 use once_cell::sync::Lazy;
+use serde::Deserialize;
+use std::collections::HashMap;
 use std::fmt::Display;
+use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use std::{collections::HashMap, num::NonZeroU64};
 use tokio::fs::{create_dir_all, remove_file, File};
 use tokio::io::{AsyncRead, AsyncWriteExt, ReadBuf};
 use tokio::sync::mpsc::UnboundedSender;
@@ -16,7 +18,7 @@ use tokio::sync::RwLock;
 use tokio_stream::wrappers::WatchStream;
 use tokio_util::codec::{BytesCodec, FramedRead};
 
-use super::{BoxedImageStream, CacheStream, CacheStreamItem};
+use super::{BoxedImageStream, CacheStream, CacheStreamItem, ImageMetadata};
 
 /// Keeps track of files that are currently being written to.
 ///
@@ -38,26 +40,27 @@ static WRITING_STATUS: Lazy<RwLock<HashMap<PathBuf, Receiver<WritingStatus>>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 
 /// Tries to read from the file, returning a byte stream if it exists
-pub async fn read_file(path: &Path) -> Option<Result<CacheStream, std::io::Error>> {
-    if path.exists() {
-        let status = WRITING_STATUS.read().await.get(path).map(Clone::clone);
+pub async fn read_file(
+    path: &Path,
+) -> Option<Result<(CacheStream, ImageMetadata), std::io::Error>> {
+    let file = File::open(path).await.ok()?;
+    let std_file = file.try_clone().await.unwrap().into_std().await;
 
-        if let Some(status) = status {
-            Some(
-                ConcurrentFsStream::new(path, WatchStream::new(status))
-                    .await
-                    .map(CacheStream::Concurrent),
-            )
-        } else {
-            Some(
-                File::open(path)
-                    .await
-                    .map(|f| CacheStream::Completed(FramedRead::new(f, BytesCodec::new()))),
-            )
-        }
+    let metadata = {
+        let mut de = serde_json::Deserializer::from_reader(std_file);
+        ImageMetadata::deserialize(&mut de).ok()?
+    };
+
+    let stream = if let Some(status) = WRITING_STATUS.read().await.get(path).map(Clone::clone) {
+        CacheStream::Concurrent(ConcurrentFsStream::from_file(
+            file,
+            WatchStream::new(status),
+        ))
     } else {
-        None
-    }
+        CacheStream::Completed(FramedRead::new(file, BytesCodec::new()))
+    };
+
+    Some(Ok((stream, metadata)))
 }
 
 /// Maps the input byte stream into one that writes to disk instead, returning
@@ -65,6 +68,7 @@ pub async fn read_file(path: &Path) -> Option<Result<CacheStream, std::io::Error
 pub async fn write_file(
     path: &Path,
     mut byte_stream: BoxedImageStream,
+    metadata: ImageMetadata,
     notifier: UnboundedSender<u64>,
 ) -> Result<CacheStream, std::io::Error> {
     let (tx, rx) = channel(WritingStatus::NotDone);
@@ -73,7 +77,7 @@ pub async fn write_file(
         let mut write_lock = WRITING_STATUS.write().await;
         let parent = path.parent().unwrap();
         create_dir_all(parent).await?;
-        let file = File::create(path).await?; // we need to  make sure the file exists and is truncated.
+        let file = File::create(path).await?; // we need to make sure the file exists and is truncated.
         write_lock.insert(path.to_path_buf(), rx.clone());
         file
     };
@@ -84,6 +88,8 @@ pub async fn write_file(
         let path_buf = path_buf; // moves path buf into async
         let mut errored = false;
         let mut bytes_written: u64 = 0;
+        file.write_all(serde_json::to_string(&metadata).unwrap().as_bytes())
+            .await?;
         while let Some(bytes) = byte_stream.next().await {
             if let Ok(mut bytes) = bytes {
                 loop {
@@ -113,17 +119,19 @@ pub async fn write_file(
             debug!("writing to file done");
         }
 
-        let mut write_lock = WRITING_STATUS.write().await;
-        // This needs to be written atomically with the write lock, else
-        // it's possible we have an inconsistent state
-        //
-        // We don't really care if we have no receivers
-        if errored {
-            let _ = tx.send(WritingStatus::Error);
-        } else {
-            let _ = tx.send(WritingStatus::Done(bytes_written));
+        {
+            let mut write_lock = WRITING_STATUS.write().await;
+            // This needs to be written atomically with the write lock, else
+            // it's possible we have an inconsistent state
+            //
+            // We don't really care if we have no receivers
+            if errored {
+                let _ = tx.send(WritingStatus::Error);
+            } else {
+                let _ = tx.send(WritingStatus::Done(bytes_written));
+            }
+            write_lock.remove(&path_buf);
         }
-        write_lock.remove(&path_buf);
 
         // notify
         if let Err(e) = notifier.send(bytes_written) {
@@ -154,12 +162,18 @@ impl ConcurrentFsStream {
         path: &Path,
         receiver: WatchStream<WritingStatus>,
     ) -> Result<Self, std::io::Error> {
-        Ok(Self {
-            file: Box::pin(File::open(path).await?),
+        File::open(path)
+            .await
+            .map(|file| Self::from_file(file, receiver))
+    }
+
+    fn from_file(file: File, receiver: WatchStream<WritingStatus>) -> Self {
+        Self {
+            file: Box::pin(file),
             receiver: Box::pin(receiver),
             bytes_read: 0,
             bytes_total: None,
-        })
+        }
     }
 }
 
@@ -182,7 +196,7 @@ impl Stream for ConcurrentFsStream {
         // First, try to read from the file...
 
         // TODO: Might be more efficient to have a larger buffer
-        let mut bytes = [0; 8 * 1024].to_vec();
+        let mut bytes = [0; 4 * 1024].to_vec();
         let mut buffer = ReadBuf::new(&mut bytes);
         match self.file.as_mut().poll_read(cx, &mut buffer) {
             Poll::Ready(Ok(_)) => (),

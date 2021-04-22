@@ -10,13 +10,14 @@ use bytes::{Bytes, BytesMut};
 use chrono::{DateTime, FixedOffset};
 use fs::ConcurrentFsStream;
 use futures::{Stream, StreamExt};
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use tokio::fs::File;
+use tokio_util::codec::{BytesCodec, FramedRead};
 
 pub use fs::UpstreamError;
 pub use generational::GenerationalCache;
 pub use low_mem::LowMemCache;
-use tokio::fs::File;
-use tokio_util::codec::{BytesCodec, FramedRead};
 
 mod fs;
 mod generational;
@@ -45,16 +46,15 @@ impl From<CacheKey> for PathBuf {
 #[derive(Clone)]
 pub struct CachedImage(pub Bytes);
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Serialize, Deserialize)]
 pub struct ImageMetadata {
     pub content_type: Option<ImageContentType>,
-    // If we can guarantee a non-zero u32 here we can save 4 bytes
     pub content_length: Option<u32>,
     pub last_modified: Option<DateTime<FixedOffset>>,
 }
 
 // Confirmed by Ply to be these types: https://link.eddie.sh/ZXfk0
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Serialize, Deserialize)]
 pub enum ImageContentType {
     Png,
     Jpeg,
@@ -147,19 +147,17 @@ pub enum CacheError {
 
 #[async_trait]
 pub trait Cache: Send + Sync {
-    async fn get(
-        &mut self,
-        key: &CacheKey,
-    ) -> Option<Result<(CacheStream, &ImageMetadata), CacheError>>;
+    async fn get(&self, key: &CacheKey)
+        -> Option<Result<(CacheStream, ImageMetadata), CacheError>>;
 
     async fn put(
-        &mut self,
+        &self,
         key: CacheKey,
         image: BoxedImageStream,
         metadata: ImageMetadata,
-    ) -> Result<(CacheStream, &ImageMetadata), CacheError>;
+    ) -> Result<CacheStream, CacheError>;
 
-    async fn increase_usage(&mut self, amt: u64);
+    async fn increase_usage(&self, amt: u64);
 }
 
 pub enum CacheStream {

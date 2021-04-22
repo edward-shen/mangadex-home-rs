@@ -136,15 +136,16 @@ impl GenerationalCache {
 #[async_trait]
 impl Cache for GenerationalCache {
     async fn get(
-        &mut self,
+        &self,
         key: &CacheKey,
-    ) -> Option<Result<(CacheStream, &ImageMetadata), CacheError>> {
+    ) -> Option<Result<(CacheStream, ImageMetadata), CacheError>> {
+        todo!();
         if self.in_memory.contains(key) {
             return self
                 .in_memory
                 .get(key)
                 // TODO: get rid of clone?
-                .map(|(image, metadata)| Ok((CacheStream::from(image.clone()), metadata)));
+                .map(|(image, metadata)| Ok((CacheStream::from(image.clone()), metadata.clone())));
         }
 
         if let Some(metadata) = self.on_disk.pop(key) {
@@ -182,21 +183,23 @@ impl Cache for GenerationalCache {
 
             buffer.shrink_to_fit();
 
+            todo!();
             self.disk_cur_size -= buffer.len() as u64;
-            let image = CacheStream::from(CachedImage(Bytes::from(buffer))).map_err(|e| e.into());
+            // let image = CacheStream::from(CachedImage(Bytes::from(buffer))).map_err(|e| e.into());
 
-            return Some(self.put(key.clone(), Box::new(image), metadata).await);
+            // return Some(self.put(key.clone(), Box::new(image), metadata).await);
         }
 
         None
     }
 
     async fn put(
-        &mut self,
+        &self,
         key: CacheKey,
         mut image: BoxedImageStream,
         metadata: ImageMetadata,
-    ) -> Result<(CacheStream, &ImageMetadata), CacheError> {
+    ) -> Result<CacheStream, CacheError> {
+        todo!();
         let mut hot_evicted = vec![];
 
         let image = {
@@ -237,9 +240,10 @@ impl Cache for GenerationalCache {
             self.push_into_cold(key, image, metadata).await;
         }
 
-        self.get(&key).await.unwrap()
+        todo!();
+        // self.get(&key).await.unwrap()
     }
 
     // noop
-    async fn increase_usage(&mut self, _amt: u64) {}
+    async fn increase_usage(&self, _amt: u64) {}
 }
