@@ -16,11 +16,9 @@ use tokio::fs::File;
 use tokio_util::codec::{BytesCodec, FramedRead};
 
 pub use fs::UpstreamError;
-pub use generational::GenerationalCache;
 pub use low_mem::LowMemCache;
 
 mod fs;
-mod generational;
 mod low_mem;
 
 #[derive(PartialEq, Eq, Hash, Clone)]

@@ -12,7 +12,7 @@ use std::{num::ParseIntError, sync::atomic::Ordering};
 use actix_web::rt::{spawn, time, System};
 use actix_web::web::{self, Data};
 use actix_web::{App, HttpServer};
-use cache::{Cache, GenerationalCache, LowMemCache};
+use cache::{Cache, LowMemCache};
 use clap::Clap;
 use config::CliArgs;
 use log::{debug, error, warn, LevelFilter};
@@ -123,17 +123,18 @@ async fn main() -> Result<(), std::io::Error> {
         }
     });
 
-    let cache: Arc<Box<dyn Cache>> = if low_mem_mode {
-        LowMemCache::new(disk_quota, cache_path.clone()).await
-    } else {
-        Arc::new(Box::new(GenerationalCache::new(
-            memory_max_size,
-            disk_quota,
-            cache_path.clone(),
-        )))
-    };
-    let cache = Arc::clone(&cache);
-    let cache1 = Arc::clone(&cache);
+    // let cache: Arc<Box<dyn Cache>> = if low_mem_mode {
+    //     LowMemCache::new(disk_quota, cache_path.clone()).await
+    // } else {
+    //     Arc::new(Box::new(GenerationalCache::new(
+    //         memory_max_size,
+    //         disk_quota,
+    //         cache_path.clone(),
+    //     )))
+    // };
+
+    let cache = LowMemCache::new(disk_quota, cache_path.clone()).await;
+    let cache_0 = Arc::clone(&cache);
 
     // Start HTTPS server
     HttpServer::new(move || {
@@ -142,7 +143,7 @@ async fn main() -> Result<(), std::io::Error> {
             .service(routes::token_data_saver)
             .route("{tail:.*}", web::get().to(routes::default))
             .app_data(Data::from(Arc::clone(&data_1)))
-            .app_data(Data::from(Arc::clone(&cache1)))
+            .app_data(Data::from(Arc::clone(&cache_0)))
     })
     .shutdown_timeout(60)
     .bind_rustls(format!("0.0.0.0:{}", port), tls_config)?

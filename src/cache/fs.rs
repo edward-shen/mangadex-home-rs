@@ -4,12 +4,12 @@ use futures::{Stream, StreamExt};
 use log::{debug, error};
 use once_cell::sync::Lazy;
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::fmt::Display;
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use std::{collections::HashMap, sync::Arc};
 use tokio::fs::{create_dir_all, remove_file, File};
 use tokio::io::{AsyncRead, AsyncWriteExt, ReadBuf};
 use tokio::sync::mpsc::UnboundedSender;
@@ -43,8 +43,8 @@ static WRITING_STATUS: Lazy<RwLock<HashMap<PathBuf, Receiver<WritingStatus>>>> =
 pub async fn read_file(
     path: &Path,
 ) -> Option<Result<(CacheStream, ImageMetadata), std::io::Error>> {
-    let file = File::open(path).await.ok()?;
-    let std_file = file.try_clone().await.unwrap().into_std().await;
+    let std_file = std::fs::File::open(path).ok()?;
+    let file = File::from_std(std_file.try_clone().ok()?);
 
     let metadata = {
         let mut de = serde_json::Deserializer::from_reader(std_file);
