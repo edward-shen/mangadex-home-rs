@@ -51,6 +51,9 @@ pub async fn read_file(
         ImageMetadata::deserialize(&mut de).ok()?
     };
 
+    // False positive, `file` is used in both cases, which means that it's not
+    // possible to move this into a map_or_else without cloning `file`.
+    #[allow(clippy::option_if_let_else)]
     let stream = if let Some(status) = WRITING_STATUS.read().await.get(path).map(Clone::clone) {
         CacheStream::Concurrent(ConcurrentFsStream::from_file(
             file,
