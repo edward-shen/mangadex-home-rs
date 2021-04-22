@@ -20,8 +20,8 @@ pub struct LowMemCache {
 }
 
 enum DbMessage {
-    Get(CacheKey),
-    Put(CacheKey, ImageMetadata),
+    Get(Arc<CacheKey>),
+    Put(Arc<CacheKey>, ImageMetadata),
 }
 
 impl LowMemCache {
@@ -87,14 +87,17 @@ impl LowMemCache {
 impl Cache for LowMemCache {
     async fn get(
         &self,
-        key: &CacheKey,
+        key: Arc<CacheKey>,
     ) -> Option<Result<(CacheStream, ImageMetadata), CacheError>> {
         let channel = self.db_update_channel_sender.clone();
-        let key_0 = key.clone();
+        let key_0 = Arc::clone(&key);
 
         tokio::spawn(async move { channel.send(DbMessage::Get(key_0)).await });
 
-        let path = self.disk_path.clone().join(PathBuf::from(key.clone()));
+        let path = self
+            .disk_path
+            .clone()
+            .join(PathBuf::from(Arc::clone(&key).as_ref()));
         super::fs::read_file(&path)
             .await
             .map(|res| res.map_err(Into::into))
@@ -102,15 +105,15 @@ impl Cache for LowMemCache {
 
     async fn put(
         &self,
-        key: CacheKey,
+        key: Arc<CacheKey>,
         image: BoxedImageStream,
         metadata: ImageMetadata,
     ) -> Result<CacheStream, CacheError> {
         let channel = self.db_update_channel_sender.clone();
-        let key_0 = key.clone();
+        let key_0 = Arc::clone(&key);
         tokio::spawn(async move { channel.send(DbMessage::Put(key_0, metadata)).await });
 
-        let path = self.disk_path.clone().join(PathBuf::from(key));
+        let path = self.disk_path.clone().join(PathBuf::from(key.as_ref()));
 
         super::fs::write_file(
             &path,

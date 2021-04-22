@@ -22,7 +22,6 @@ use simple_logger::SimpleLogger;
 use state::{RwLockServerState, ServerState};
 use stop::send_stop;
 use thiserror::Error;
-use tokio::sync::RwLock as TokioRwLock;
 
 mod cache;
 mod config;

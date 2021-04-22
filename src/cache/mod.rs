@@ -1,8 +1,8 @@
-use std::fmt::Display;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::str::FromStr;
 use std::task::{Context, Poll};
+use std::{fmt::Display, sync::Arc};
 
 use actix_web::http::HeaderValue;
 use async_trait::async_trait;
@@ -39,6 +39,13 @@ impl Display for CacheKey {
 impl From<CacheKey> for PathBuf {
     #[inline]
     fn from(key: CacheKey) -> Self {
+        key.to_string().into()
+    }
+}
+
+impl From<&CacheKey> for PathBuf {
+    #[inline]
+    fn from(key: &CacheKey) -> Self {
         key.to_string().into()
     }
 }
@@ -147,12 +154,14 @@ pub enum CacheError {
 
 #[async_trait]
 pub trait Cache: Send + Sync {
-    async fn get(&self, key: &CacheKey)
-        -> Option<Result<(CacheStream, ImageMetadata), CacheError>>;
+    async fn get(
+        &self,
+        key: Arc<CacheKey>,
+    ) -> Option<Result<(CacheStream, ImageMetadata), CacheError>>;
 
     async fn put(
         &self,
-        key: CacheKey,
+        key: Arc<CacheKey>,
         image: BoxedImageStream,
         metadata: ImageMetadata,
     ) -> Result<CacheStream, CacheError>;

@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -137,65 +137,65 @@ impl GenerationalCache {
 impl Cache for GenerationalCache {
     async fn get(
         &self,
-        key: &CacheKey,
+        key: Arc<CacheKey>,
     ) -> Option<Result<(CacheStream, ImageMetadata), CacheError>> {
         todo!();
-        if self.in_memory.contains(key) {
-            return self
-                .in_memory
-                .get(key)
-                // TODO: get rid of clone?
-                .map(|(image, metadata)| Ok((CacheStream::from(image.clone()), metadata.clone())));
-        }
+        // if self.in_memory.contains(key) {
+        //     return self
+        //         .in_memory
+        //         .get(key)
+        //         // TODO: get rid of clone?
+        //         .map(|(image, metadata)| Ok((CacheStream::from(image.clone()), metadata.clone())));
+        // }
 
-        if let Some(metadata) = self.on_disk.pop(key) {
-            let new_key_path = {
-                let mut root = self.disk_path.clone();
-                root.push(PathBuf::from(key.clone()));
-                root
-            };
+        // if let Some(metadata) = self.on_disk.pop(key) {
+        //     let new_key_path = {
+        //         let mut root = self.disk_path.clone();
+        //         root.push(PathBuf::from(key.clone()));
+        //         root
+        //     };
 
-            // extract from disk, if it exists
-            let file = File::open(&new_key_path).await;
+        //     // extract from disk, if it exists
+        //     let file = File::open(&new_key_path).await;
 
-            let mut buffer = metadata
-                .content_length
-                .map_or_else(Vec::new, |v| Vec::with_capacity(v as usize));
+        //     let mut buffer = metadata
+        //         .content_length
+        //         .map_or_else(Vec::new, |v| Vec::with_capacity(v as usize));
 
-            match file {
-                Ok(mut file) => {
-                    match file.read_to_end(&mut buffer).await {
-                        Ok(_) => {
-                            // We don't particularly care if we fail to delete from disk since
-                            // if it's an error it means it's already been dropped.
-                            tokio::spawn(remove_file(new_key_path));
-                        }
-                        Err(e) => {
-                            warn!("Failed to read from {:?}: {}", new_key_path, e);
-                        }
-                    }
-                }
-                Err(e) => {
-                    warn!("Failed to open {:?}: {}", new_key_path, e);
-                    return None;
-                }
-            }
+        //     match file {
+        //         Ok(mut file) => {
+        //             match file.read_to_end(&mut buffer).await {
+        //                 Ok(_) => {
+        //                     // We don't particularly care if we fail to delete from disk since
+        //                     // if it's an error it means it's already been dropped.
+        //                     tokio::spawn(remove_file(new_key_path));
+        //                 }
+        //                 Err(e) => {
+        //                     warn!("Failed to read from {:?}: {}", new_key_path, e);
+        //                 }
+        //             }
+        //         }
+        //         Err(e) => {
+        //             warn!("Failed to open {:?}: {}", new_key_path, e);
+        //             return None;
+        //         }
+        //     }
 
-            buffer.shrink_to_fit();
+        //     buffer.shrink_to_fit();
 
-            todo!();
-            self.disk_cur_size -= buffer.len() as u64;
-            // let image = CacheStream::from(CachedImage(Bytes::from(buffer))).map_err(|e| e.into());
+        //     todo!();
+        //     self.disk_cur_size -= buffer.len() as u64;
+        //     // let image = CacheStream::from(CachedImage(Bytes::from(buffer))).map_err(|e| e.into());
 
-            // return Some(self.put(key.clone(), Box::new(image), metadata).await);
-        }
+        //     // return Some(self.put(key.clone(), Box::new(image), metadata).await);
+        // }
 
         None
     }
 
     async fn put(
         &self,
-        key: CacheKey,
+        key: Arc<CacheKey>,
         mut image: BoxedImageStream,
         metadata: ImageMetadata,
     ) -> Result<CacheStream, CacheError> {
@@ -227,12 +227,14 @@ impl Cache for GenerationalCache {
                 }
             }
 
-            self.in_memory.put(key.clone(), (image, metadata));
+            todo!();
+            // self.in_memory.put(key.clone(), (image, metadata));
             self.memory_cur_size += new_img_size;
         } else {
             // Image was larger than memory capacity, push directly into cold
             // storage.
-            self.push_into_cold(key.clone(), image, metadata).await;
+            todo!();
+            // self.push_into_cold(key.clone(), image, metadata).await;
         };
 
         // Push evicted hot entires into cold storage.

@@ -1,4 +1,4 @@
-use std::sync::atomic::Ordering;
+use std::sync::{atomic::Ordering, Arc};
 
 use actix_web::http::header::{
     ACCESS_CONTROL_ALLOW_ORIGIN, ACCESS_CONTROL_EXPOSE_HEADERS, CACHE_CONTROL, CONTENT_LENGTH,
@@ -15,7 +15,6 @@ use log::{debug, error, info, warn};
 use serde::Deserialize;
 use sodiumoxide::crypto::box_::{open_precomputed, Nonce, PrecomputedKey, NONCEBYTES};
 use thiserror::Error;
-use tokio::sync::RwLock;
 
 use crate::cache::{Cache, CacheKey, ImageMetadata, UpstreamError};
 use crate::client_api_version;
@@ -192,9 +191,9 @@ async fn fetch_image(
     file_name: String,
     is_data_saver: bool,
 ) -> ServerResponse {
-    let key = CacheKey(chapter_hash, file_name, is_data_saver);
+    let key = Arc::new(CacheKey(chapter_hash, file_name, is_data_saver));
 
-    match cache.get(&key).await {
+    match cache.get(Arc::clone(&key)).await {
         Some(Ok((image, metadata))) => {
             return construct_response(image, &metadata);
         }
