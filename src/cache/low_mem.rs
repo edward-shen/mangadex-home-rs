@@ -1,13 +1,15 @@
 //! Low memory caching stuff
 
+use std::path::PathBuf;
 use std::str::FromStr;
-use std::sync::{atomic::Ordering, Arc};
-use std::{path::PathBuf, sync::atomic::AtomicU64};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures::StreamExt;
 use log::LevelFilter;
-use sqlx::{sqlite::SqliteConnectOptions, ConnectOptions, SqlitePool};
+use sqlx::sqlite::SqliteConnectOptions;
+use sqlx::{ConnectOptions, SqlitePool};
 use tokio::sync::mpsc::{channel, unbounded_channel, Sender, UnboundedSender};
 use tokio_stream::wrappers::ReceiverStream;
 

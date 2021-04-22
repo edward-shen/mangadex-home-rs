@@ -13,6 +13,7 @@ use futures::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::fs::File;
+use tokio::io::BufReader;
 use tokio_util::codec::{BytesCodec, FramedRead};
 
 pub use fs::UpstreamError;
@@ -170,7 +171,7 @@ pub trait Cache: Send + Sync {
 pub enum CacheStream {
     Concurrent(ConcurrentFsStream),
     Memory(MemStream),
-    Completed(FramedRead<File, BytesCodec>),
+    Completed(FramedRead<BufReader<File>, BytesCodec>),
 }
 
 impl From<CachedImage> for CacheStream {

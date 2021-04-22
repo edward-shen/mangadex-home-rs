@@ -1,4 +1,4 @@
-#![warn(clippy::pedantic, clippy::nursery)]
+#![warn(clippy::pedantic, clippy::nursery, clippy::perf)]
 // We're end users, so these is ok
 #![allow(clippy::module_name_repetitions)]
 
