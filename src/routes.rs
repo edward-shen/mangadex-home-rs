@@ -1,4 +1,4 @@
-use std::sync::{atomic::Ordering, Arc};
+use std::sync::atomic::Ordering;
 
 use actix_web::http::header::{
     ACCESS_CONTROL_ALLOW_ORIGIN, ACCESS_CONTROL_EXPOSE_HEADERS, CACHE_CONTROL, CONTENT_LENGTH,
@@ -191,9 +191,9 @@ async fn fetch_image(
     file_name: String,
     is_data_saver: bool,
 ) -> ServerResponse {
-    let key = Arc::new(CacheKey(chapter_hash, file_name, is_data_saver));
+    let key = CacheKey(chapter_hash, file_name, is_data_saver);
 
-    match cache.get(Arc::clone(&key)).await {
+    match cache.get(&key).await {
         Some(Ok((image, metadata))) => {
             return construct_response(image, &metadata);
         }
@@ -263,7 +263,7 @@ async fn fetch_image(
 
             let metadata = ImageMetadata::new(content_type, length, last_mod).unwrap();
             let stream = {
-                match cache.put(key, Box::new(body), metadata).await {
+                match cache.put(&key, Box::new(body), metadata).await {
                     Ok(stream) => stream,
                     Err(e) => {
                         warn!("Failed to insert into cache: {}", e);

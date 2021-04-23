@@ -8,11 +8,10 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use futures::StreamExt;
 use log::{warn, LevelFilter};
-use sqlx::{sqlite::SqliteConnectOptions, ConnectOptions, SqlitePool};
-use tokio::{
-    fs::remove_file,
-    sync::mpsc::{channel, Sender},
-};
+use sqlx::sqlite::SqliteConnectOptions;
+use sqlx::{ConnectOptions, SqlitePool};
+use tokio::fs::remove_file;
+use tokio::sync::mpsc::{channel, Sender};
 use tokio_stream::wrappers::ReceiverStream;
 
 use super::{BoxedImageStream, Cache, CacheError, CacheKey, CacheStream, ImageMetadata};
@@ -63,7 +62,8 @@ impl LowMemCache {
         // item that was put into the cache.
         let new_self_0 = Arc::clone(&new_self);
 
-        // Spawn a new task that will listen for updates to the db.
+        // Spawn a new task that will listen for updates to the db, pruning if
+        // the size becomes too large
         tokio::spawn(async move {
             let db_pool = db_pool;
             let max_on_disk_size = disk_max_size / 20 * 19;
@@ -134,15 +134,11 @@ impl LowMemCache {
 impl Cache for LowMemCache {
     async fn get(
         &self,
-        key: Arc<CacheKey>,
+        key: &CacheKey,
     ) -> Option<Result<(CacheStream, ImageMetadata), CacheError>> {
         let channel = self.db_update_channel_sender.clone();
 
-        let path = Arc::new(
-            self.disk_path
-                .clone()
-                .join(PathBuf::from(Arc::clone(&key).as_ref())),
-        );
+        let path = Arc::new(self.disk_path.clone().join(PathBuf::from(key)));
         let path_0 = Arc::clone(&path);
 
         tokio::spawn(async move { channel.send(DbMessage::Get(path_0)).await });
@@ -154,13 +150,13 @@ impl Cache for LowMemCache {
 
     async fn put(
         &self,
-        key: Arc<CacheKey>,
+        key: &CacheKey,
         image: BoxedImageStream,
         metadata: ImageMetadata,
     ) -> Result<CacheStream, CacheError> {
         let channel = self.db_update_channel_sender.clone();
 
-        let path = Arc::new(self.disk_path.clone().join(PathBuf::from(key.as_ref())));
+        let path = Arc::new(self.disk_path.clone().join(PathBuf::from(key)));
         let path_0 = Arc::clone(&path);
 
         let db_callback = |size: u32| async move {
