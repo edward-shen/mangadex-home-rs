@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::fs::{create_dir_all, remove_file, File};
-use tokio::io::{AsyncRead, AsyncSeekExt, AsyncWriteExt, ReadBuf};
+use tokio::io::{AsyncRead, AsyncSeekExt, AsyncWriteExt, BufReader, ReadBuf};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::watch::{channel, Receiver};
 use tokio::sync::RwLock;
@@ -61,7 +61,7 @@ pub async fn read_file(
             WatchStream::new(status),
         ))
     } else {
-        CacheStream::Completed(FramedRead::new(file, BytesCodec::new()))
+        CacheStream::Completed(FramedRead::new(BufReader::new(file), BytesCodec::new()))
     };
 
     Some(Ok((stream, metadata)))
@@ -156,7 +156,7 @@ pub async fn write_file(
 }
 
 pub struct ConcurrentFsStream {
-    file: Pin<Box<File>>,
+    file: Pin<Box<BufReader<File>>>,
     receiver: Pin<Box<WatchStream<WritingStatus>>>,
     bytes_read: u64,
     bytes_total: Option<NonZeroU64>,
@@ -175,7 +175,7 @@ impl ConcurrentFsStream {
 
     fn from_file(file: File, receiver: WatchStream<WritingStatus>) -> Self {
         Self {
-            file: Box::pin(file),
+            file: Box::pin(BufReader::new(file)),
             receiver: Box::pin(receiver),
             bytes_read: 0,
             bytes_total: None,
