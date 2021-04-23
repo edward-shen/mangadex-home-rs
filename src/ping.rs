@@ -11,9 +11,10 @@ use serde::{Deserialize, Serialize};
 use sodiumoxide::crypto::box_::PrecomputedKey;
 use url::Url;
 
-use crate::config::VALIDATE_TOKENS;
-use crate::state::RwLockServerState;
-use crate::{client_api_version, config::CliArgs};
+use crate::config::CliArgs;
+use crate::state::PREVIOUSLY_PAUSED;
+use crate::{client_api_version, state::PREVIOUSLY_COMPROMISED};
+use crate::{config::VALIDATE_TOKENS, state::RwLockServerState};
 
 pub const CONTROL_CENTER_PING_URL: &str = "https://api.mangadex.network/ping";
 
@@ -180,12 +181,19 @@ pub async fn update_server_state(secret: &str, cli: &CliArgs, data: &mut Arc<RwL
                     write_guard.tls_config = tls;
                 }
 
-                if resp.compromised {
-                    error!("Got compromised response from control center!");
+                let previously_compromised = PREVIOUSLY_COMPROMISED.load(Ordering::Acquire);
+                if resp.compromised != previously_compromised {
+                    PREVIOUSLY_COMPROMISED.store(resp.compromised, Ordering::Release);
+                    if resp.compromised {
+                        error!("Got compromised response from control center!");
+                    } else {
+                        info!("No longer compromised!");
+                    }
                 }
 
-                if resp.paused != write_guard.log_state.was_paused_before {
-                    write_guard.log_state.was_paused_before = resp.paused;
+                let previously_paused = PREVIOUSLY_PAUSED.load(Ordering::Acquire);
+                if resp.paused != previously_paused {
+                    PREVIOUSLY_PAUSED.store(resp.paused, Ordering::Release);
                     if resp.paused {
                         warn!("Control center has paused this node.");
                     } else {

@@ -1,4 +1,5 @@
-use std::sync::{atomic::Ordering, Arc};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use crate::config::{CliArgs, SEND_SERVER_VERSION, VALIDATE_TOKENS};
 use crate::ping::{Request, Response, Tls, CONTROL_CENTER_PING_URL};
@@ -15,12 +16,10 @@ pub struct ServerState {
     pub tls_config: Tls,
     pub url: Url,
     pub url_overridden: bool,
-    pub log_state: LogState,
 }
 
-pub struct LogState {
-    pub was_paused_before: bool,
-}
+pub static PREVIOUSLY_PAUSED: AtomicBool = AtomicBool::new(false);
+pub static PREVIOUSLY_COMPROMISED: AtomicBool = AtomicBool::new(false);
 
 impl ServerState {
     pub async fn init(secret: &str, config: &CliArgs) -> Result<Self, ()> {
@@ -53,10 +52,12 @@ impl ServerState {
                         })
                         .unwrap();
 
+                    PREVIOUSLY_COMPROMISED.store(resp.paused, Ordering::Release);
                     if resp.compromised {
                         error!("Got compromised response from control center!");
                     }
 
+                    PREVIOUSLY_PAUSED.store(resp.paused, Ordering::Release);
                     if resp.paused {
                         warn!("Control center has paused this node!");
                     }
@@ -86,9 +87,6 @@ impl ServerState {
                         tls_config: resp.tls.unwrap(),
                         url: resp.url,
                         url_overridden: config.override_upstream.is_some(),
-                        log_state: LogState {
-                            was_paused_before: resp.paused,
-                        },
                     })
                 }
                 Err(e) => {
