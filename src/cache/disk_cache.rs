@@ -8,7 +8,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures::StreamExt;
-use log::{warn, LevelFilter};
+use log::{error, warn, LevelFilter};
 use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::{ConnectOptions, SqlitePool};
 use tokio::fs::remove_file;
@@ -36,7 +36,7 @@ impl DiskCache {
     pub async fn new(disk_max_size: u64, disk_path: PathBuf) -> Arc<Box<dyn Cache>> {
         let (db_tx, db_rx) = channel(128);
         let db_pool = {
-            let db_url = format!("sqlite:{}/metadata.sqlite", disk_path.to_str().unwrap());
+            let db_url = format!("sqlite:{}/metadata.sqlite", disk_path.to_string_lossy());
             let mut options = SqliteConnectOptions::from_str(&db_url)
                 .unwrap()
                 .create_if_missing(true);
@@ -80,7 +80,13 @@ async fn db_listener(
     let mut recv_stream = ReceiverStream::new(db_rx).ready_chunks(128);
     while let Some(messages) = recv_stream.next().await {
         let now = chrono::Utc::now();
-        let mut transaction = db_pool.begin().await.unwrap();
+        let mut transaction = match db_pool.begin().await {
+            Ok(transaction) => transaction,
+            Err(e) => {
+                error!("Failed to start a transaction to DB, cannot update DB. Disk cache may be losing track of files! {}", e);
+                continue;
+            }
+        };
         for message in messages {
             match message {
                 DbMessage::Get(entry) => {
@@ -111,15 +117,42 @@ async fn db_listener(
                 }
             }
         }
-        transaction.commit().await.unwrap();
+
+        if let Err(e) = transaction.commit().await {
+            error!(
+                "Failed to commit transaction to DB. Disk cache may be losing track of files! {}",
+                e
+            );
+        }
 
         if cache.on_disk_size() >= max_on_disk_size {
-            let mut conn = db_pool.acquire().await.unwrap();
-            let items =
-                sqlx::query!("select id, size from Images order by accessed asc limit 1000")
-                    .fetch_all(&mut conn)
-                    .await
-                    .unwrap();
+            let mut conn = match db_pool.acquire().await {
+                Ok(conn) => conn,
+                Err(e) => {
+                    error!(
+                        "Failed to get a DB connection and cannot prune disk cache: {}",
+                        e
+                    );
+                    continue;
+                }
+            };
+
+            let items = {
+                let request =
+                    sqlx::query!("select id, size from Images order by accessed asc limit 1000")
+                        .fetch_all(&mut conn)
+                        .await;
+                match request {
+                    Ok(items) => items,
+                    Err(e) => {
+                        error!(
+                            "Failed to fetch oldest images and cannot prune disk cache: {}",
+                            e
+                        );
+                        continue;
+                    }
+                }
+            };
 
             let mut size_freed = 0;
             for item in items {

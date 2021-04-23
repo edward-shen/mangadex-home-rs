@@ -39,7 +39,9 @@ impl<'a> Request<'a> {
             port: config.port,
             disk_space: config.disk_quota,
             network_speed: config.network_speed,
-            build_version: client_api_version!().parse().unwrap(),
+            build_version: client_api_version!()
+                .parse()
+                .expect("to parse the build version"),
             tls_created_at: Some(state.0.read().tls_config.created_at.clone()),
         }
     }
@@ -53,7 +55,9 @@ impl<'a> From<(&'a str, &CliArgs)> for Request<'a> {
             port: config.port,
             disk_space: config.disk_quota,
             network_speed: config.network_speed,
-            build_version: client_api_version!().parse().unwrap(),
+            build_version: client_api_version!()
+                .parse()
+                .expect("to parse the build version"),
             tls_created_at: None,
         }
     }

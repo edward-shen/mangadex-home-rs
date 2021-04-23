@@ -84,14 +84,14 @@ pub async fn write_file<
 
     let mut file = {
         let mut write_lock = WRITING_STATUS.write().await;
-        let parent = path.parent().unwrap();
+        let parent = path.parent().expect("The path to have a parent");
         create_dir_all(parent).await?;
         let file = File::create(path).await?; // we need to make sure the file exists and is truncated.
         write_lock.insert(path.to_path_buf(), rx.clone());
         file
     };
 
-    let metadata_string = serde_json::to_string(&metadata).unwrap();
+    let metadata_string = serde_json::to_string(&metadata).expect("serialization to work");
     let metadata_size = metadata_string.len();
     // need owned variant because async lifetime
     let path_buf = path.to_path_buf();
@@ -151,9 +151,8 @@ pub async fn write_file<
         }
 
         tokio::spawn(db_callback(bytes_written));
-        if accumulate {
+        if let Some(sender) = on_complete {
             tokio::spawn(async move {
-                let sender = on_complete.unwrap();
                 sender
                     .send((
                         cache_key,
@@ -244,7 +243,7 @@ impl Stream for ConcurrentFsStream {
             if let Poll::Ready(Some(WritingStatus::Done(n))) =
                 self.receiver.as_mut().poll_next_unpin(cx)
             {
-                self.bytes_total = Some(NonZeroU32::new(n).unwrap())
+                self.bytes_total = Some(NonZeroU32::new(n).expect("Stored a 0 byte image?"))
             }
 
             // Okay, now we know if we've read enough bytes or not. If the
