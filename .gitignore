@@ -1,6 +1,6 @@
 /target
 .env
-cache
+/cache
 flamegraph*.svg
 perf.data*
 dhat.out.*
