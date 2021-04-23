@@ -25,8 +25,8 @@ pub struct LowMemCache {
 }
 
 enum DbMessage {
-    Get(Arc<CacheKey>),
-    Put(PathBuf, u32),
+    Get(Arc<PathBuf>),
+    Put(Arc<PathBuf>, u32),
 }
 
 impl LowMemCache {
@@ -102,7 +102,7 @@ impl LowMemCache {
                 for message in messages {
                     match message {
                         DbMessage::Get(entry) => {
-                            let key = entry.to_string();
+                            let key = entry.as_os_str().to_str();
                             let query = sqlx::query!(
                                 "update Images set accessed = ? where id = ?",
                                 now,
@@ -111,7 +111,7 @@ impl LowMemCache {
                             .execute(&mut transaction)
                             .await;
                             if let Err(e) = query {
-                                warn!("Failed to update timestamp in db for {}: {}", key, e);
+                                warn!("Failed to update timestamp in db for {:?}: {}", key, e);
                             }
                         }
                         DbMessage::Put(entry, size) => {
@@ -145,14 +145,16 @@ impl Cache for LowMemCache {
         key: Arc<CacheKey>,
     ) -> Option<Result<(CacheStream, ImageMetadata), CacheError>> {
         let channel = self.db_update_channel_sender.clone();
-        let key_0 = Arc::clone(&key);
 
-        tokio::spawn(async move { channel.send(DbMessage::Get(key_0)).await });
+        let path = Arc::new(
+            self.disk_path
+                .clone()
+                .join(PathBuf::from(Arc::clone(&key).as_ref())),
+        );
+        let path_0 = Arc::clone(&path);
 
-        let path = self
-            .disk_path
-            .clone()
-            .join(PathBuf::from(Arc::clone(&key).as_ref()));
+        tokio::spawn(async move { channel.send(DbMessage::Get(path_0)).await });
+
         super::fs::read_file(&path)
             .await
             .map(|res| res.map_err(Into::into))
@@ -166,8 +168,8 @@ impl Cache for LowMemCache {
     ) -> Result<CacheStream, CacheError> {
         let channel = self.db_update_channel_sender.clone();
 
-        let path = self.disk_path.clone().join(PathBuf::from(key.as_ref()));
-        let path_0 = path.clone();
+        let path = Arc::new(self.disk_path.clone().join(PathBuf::from(key.as_ref())));
+        let path_0 = Arc::clone(&path);
 
         let db_callback = |size: u32| async move {
             let _ = channel.send(DbMessage::Put(path_0, size)).await;
