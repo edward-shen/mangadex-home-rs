@@ -157,7 +157,7 @@ pub trait Cache: Send + Sync {
 
     async fn put(
         &self,
-        key: &CacheKey,
+        key: CacheKey,
         image: BoxedImageStream,
         metadata: ImageMetadata,
     ) -> Result<CacheStream, CacheError>;

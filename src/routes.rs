@@ -263,7 +263,7 @@ async fn fetch_image(
 
             let metadata = ImageMetadata::new(content_type, length, last_mod).unwrap();
             let stream = {
-                match cache.put(&key, Box::new(body), metadata).await {
+                match cache.put(key, Box::new(body), metadata).await {
                     Ok(stream) => stream,
                     Err(e) => {
                         warn!("Failed to insert into cache: {}", e);
