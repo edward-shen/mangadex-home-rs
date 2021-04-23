@@ -23,6 +23,8 @@ use state::{RwLockServerState, ServerState};
 use stop::send_stop;
 use thiserror::Error;
 
+use crate::cache::MemoryLruCache;
+
 mod cache;
 mod config;
 mod ping;
@@ -123,17 +125,12 @@ async fn main() -> Result<(), std::io::Error> {
         }
     });
 
-    // let cache: Arc<Box<dyn Cache>> = if low_mem_mode {
-    //     LowMemCache::new(disk_quota, cache_path.clone()).await
-    // } else {
-    //     Arc::new(Box::new(GenerationalCache::new(
-    //         memory_max_size,
-    //         disk_quota,
-    //         cache_path.clone(),
-    //     )))
-    // };
+    let cache: Arc<Box<dyn Cache>> = if low_mem_mode {
+        LowMemCache::new(disk_quota, cache_path.clone()).await
+    } else {
+        MemoryLruCache::new(disk_quota, cache_path.clone(), memory_max_size).await
+    };
 
-    let cache = LowMemCache::new(disk_quota, cache_path.clone()).await;
     let cache_0 = Arc::clone(&cache);
 
     // Start HTTPS server

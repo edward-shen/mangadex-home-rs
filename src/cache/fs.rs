@@ -1,5 +1,5 @@
 use actix_web::error::PayloadError;
-use bytes::{Buf, Bytes};
+use bytes::{Buf, Bytes, BytesMut};
 use futures::{Future, Stream, StreamExt};
 use log::debug;
 use once_cell::sync::Lazy;
@@ -13,12 +13,13 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::fs::{create_dir_all, remove_file, File};
 use tokio::io::{AsyncRead, AsyncSeekExt, AsyncWriteExt, BufReader, ReadBuf};
+use tokio::sync::mpsc::Sender;
 use tokio::sync::watch::{channel, Receiver};
 use tokio::sync::RwLock;
 use tokio_stream::wrappers::WatchStream;
 use tokio_util::codec::{BytesCodec, FramedRead};
 
-use super::{BoxedImageStream, CacheStream, CacheStreamItem, ImageMetadata};
+use super::{BoxedImageStream, CacheKey, CacheStream, CacheStreamItem, ImageMetadata};
 
 /// Keeps track of files that are currently being written to.
 ///
@@ -70,12 +71,14 @@ pub async fn read_file(
 /// a stream that reads from disk instead.
 pub async fn write_file<
     Fut: 'static + Send + Sync + Future<Output = ()>,
-    F: 'static + Send + Sync + FnOnce(u32) -> Fut,
+    DbCallback: 'static + Send + Sync + FnOnce(u32) -> Fut,
 >(
     path: &Path,
+    cache_key: CacheKey,
     mut byte_stream: BoxedImageStream,
     metadata: ImageMetadata,
-    db_callback: F,
+    db_callback: DbCallback,
+    on_complete: Option<Sender<(CacheKey, Bytes, ImageMetadata, usize)>>,
 ) -> Result<CacheStream, std::io::Error> {
     let (tx, rx) = channel(WritingStatus::NotDone);
 
@@ -88,17 +91,24 @@ pub async fn write_file<
         file
     };
 
-    let metadata = serde_json::to_string(&metadata).unwrap();
-    let metadata_size = metadata.len();
+    let metadata_string = serde_json::to_string(&metadata).unwrap();
+    let metadata_size = metadata_string.len();
     // need owned variant because async lifetime
     let path_buf = path.to_path_buf();
     tokio::spawn(async move {
         let path_buf = path_buf; // moves path buf into async
         let mut errored = false;
         let mut bytes_written: u32 = 0;
-        file.write_all(&metadata.as_bytes()).await?;
+        let mut acc_bytes = BytesMut::new();
+        let accumulate = on_complete.is_some();
+        file.write_all(metadata_string.as_bytes()).await?;
+
         while let Some(bytes) = byte_stream.next().await {
             if let Ok(mut bytes) = bytes {
+                if accumulate {
+                    acc_bytes.extend(&bytes);
+                }
+
                 loop {
                     match file.write(&bytes).await? {
                         0 => break,
@@ -141,6 +151,19 @@ pub async fn write_file<
         }
 
         tokio::spawn(db_callback(bytes_written));
+        if accumulate {
+            tokio::spawn(async move {
+                let sender = on_complete.unwrap();
+                sender
+                    .send((
+                        cache_key,
+                        acc_bytes.freeze(),
+                        metadata,
+                        bytes_written as usize,
+                    ))
+                    .await
+            });
+        }
 
         // We don't ever check this, so the return value doesn't matter
         Ok::<_, std::io::Error>(())

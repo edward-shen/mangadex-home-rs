@@ -12,14 +12,18 @@ use fs::ConcurrentFsStream;
 use futures::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tokio::{fs::File, io::BufReader};
+use tokio::fs::File;
+use tokio::io::BufReader;
+use tokio::sync::mpsc::Sender;
 use tokio_util::codec::{BytesCodec, FramedRead};
 
+pub use disk_cache::LowMemCache;
 pub use fs::UpstreamError;
-pub use low_mem::LowMemCache;
+pub use mem_cache::MemoryLruCache;
 
+mod disk_cache;
 mod fs;
-mod low_mem;
+mod mem_cache;
 
 #[derive(PartialEq, Eq, Hash, Clone)]
 pub struct CacheKey(pub String, pub String, pub bool);
@@ -61,7 +65,7 @@ pub struct ImageMetadata {
 // Confirmed by Ply to be these types: https://link.eddie.sh/ZXfk0
 #[derive(Copy, Clone, Serialize, Deserialize)]
 pub enum ImageContentType {
-    Png,
+    Png = 0,
     Jpeg,
     Gif,
 }
@@ -167,6 +171,20 @@ pub trait Cache: Send + Sync {
     fn decrease_usage(&self, amt: u64);
 
     fn on_disk_size(&self) -> u64;
+
+    fn mem_size(&self) -> u64;
+
+    async fn put_with_on_completed_callback(
+        &self,
+        key: CacheKey,
+        image: BoxedImageStream,
+        metadata: ImageMetadata,
+        on_complete: Sender<(CacheKey, Bytes, ImageMetadata, usize)>,
+    ) -> Result<CacheStream, CacheError>;
+
+    async fn put_internal(&self, key: CacheKey, image: Bytes, metadata: ImageMetadata, size: usize);
+
+    async fn pop_memory(&self) -> Option<(CacheKey, Bytes, ImageMetadata, usize)>;
 }
 
 pub enum CacheStream {
@@ -198,7 +216,7 @@ impl Stream for CacheStream {
     }
 }
 
-pub struct MemStream(Bytes);
+pub struct MemStream(pub Bytes);
 
 impl Stream for MemStream {
     type Item = CacheStreamItem;
