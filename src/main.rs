@@ -3,11 +3,12 @@
 #![allow(clippy::module_name_repetitions)]
 
 use std::env::{self, VarError};
+use std::hint::unreachable_unchecked;
+use std::num::ParseIntError;
 use std::process;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use std::{num::ParseIntError, sync::atomic::Ordering};
 
 use actix_web::rt::{spawn, time, System};
 use actix_web::web::{self, Data};
@@ -48,7 +49,7 @@ enum ServerError {
 }
 
 #[actix_web::main]
-async fn main() -> Result<(), std::io::Error> {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // It's ok to fail early here, it would imply we have a invalid config.
     dotenv::dotenv().ok();
     let cli_args = CliArgs::parse();
@@ -66,10 +67,10 @@ async fn main() -> Result<(), std::io::Error> {
         (0, 0) => LevelFilter::Info,
         (_, 1) => LevelFilter::Debug,
         (_, n) if n > 1 => LevelFilter::Trace,
-        _ => unreachable!(),
+        _ => unsafe { unreachable_unchecked() },
     };
 
-    SimpleLogger::new().with_level(log_level).init().unwrap();
+    SimpleLogger::new().with_level(log_level).init()?;
 
     print_preamble_and_warnings();
 
@@ -81,7 +82,7 @@ async fn main() -> Result<(), std::io::Error> {
     };
     let client_secret_1 = client_secret.clone();
 
-    let server = ServerState::init(&client_secret, &cli_args).await.unwrap();
+    let server = ServerState::init(&client_secret, &cli_args).await?;
     let data_0 = Arc::new(RwLockServerState(RwLock::new(server)));
     let data_1 = Arc::clone(&data_0);
 

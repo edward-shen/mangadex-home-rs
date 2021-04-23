@@ -8,6 +8,7 @@ use parking_lot::RwLock;
 use rustls::sign::CertifiedKey;
 use rustls::ResolvesServerCert;
 use sodiumoxide::crypto::box_::PrecomputedKey;
+use thiserror::Error;
 use url::Url;
 
 pub struct ServerState {
@@ -21,8 +22,22 @@ pub struct ServerState {
 pub static PREVIOUSLY_PAUSED: AtomicBool = AtomicBool::new(false);
 pub static PREVIOUSLY_COMPROMISED: AtomicBool = AtomicBool::new(false);
 
+#[derive(Error, Debug)]
+pub enum ServerInitError {
+    #[error(transparent)]
+    MalformedResponse(reqwest::Error),
+    #[error(transparent)]
+    Timeout(reqwest::Error),
+    #[error(transparent)]
+    SendFailure(reqwest::Error),
+    #[error("Failed to parse token key")]
+    KeyParseError(String),
+    #[error("Token key was not provided in initial request")]
+    MissingTokenKey,
+}
+
 impl ServerState {
-    pub async fn init(secret: &str, config: &CliArgs) -> Result<Self, ()> {
+    pub async fn init(secret: &str, config: &CliArgs) -> Result<Self, ServerInitError> {
         let resp = reqwest::Client::new()
             .post(CONTROL_CENTER_PING_URL)
             .json(&Request::from((secret, config)))
@@ -39,18 +54,18 @@ impl ServerState {
                 Ok(mut resp) => {
                     let key = resp
                         .token_key
+                        .ok_or(ServerInitError::MissingTokenKey)
                         .and_then(|key| {
                             if let Some(key) = base64::decode(&key)
                                 .ok()
                                 .and_then(|k| PrecomputedKey::from_slice(&k))
                             {
-                                Some(key)
+                                Ok(key)
                             } else {
                                 error!("Failed to parse token key: got {}", key);
-                                None
+                                Err(ServerInitError::KeyParseError(key))
                             }
-                        })
-                        .unwrap();
+                        })?;
 
                     PREVIOUSLY_COMPROMISED.store(resp.paused, Ordering::Release);
                     if resp.compromised {
@@ -91,17 +106,17 @@ impl ServerState {
                 }
                 Err(e) => {
                     warn!("Got malformed response: {}", e);
-                    Err(())
+                    Err(ServerInitError::MalformedResponse(e))
                 }
             },
             Err(e) => match e {
                 e if e.is_timeout() => {
                     error!("Response timed out to control server. Is MangaDex down?");
-                    Err(())
+                    Err(ServerInitError::Timeout(e))
                 }
                 e => {
                     warn!("Failed to send request: {}", e);
-                    Err(())
+                    Err(ServerInitError::SendFailure(e))
                 }
             },
         }

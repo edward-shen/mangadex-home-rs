@@ -13,7 +13,6 @@ use tokio::sync::mpsc::{channel, Sender};
 use tokio::sync::Mutex;
 
 /// Memory accelerated disk cache. Uses an LRU in memory to speed up reads.
-///
 pub struct MemoryLruCache {
     inner: Arc<Box<dyn Cache>>,
     cur_mem_size: AtomicU64,
