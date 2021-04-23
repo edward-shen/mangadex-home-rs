@@ -164,7 +164,11 @@ pub trait Cache: Send + Sync {
         metadata: ImageMetadata,
     ) -> Result<CacheStream, CacheError>;
 
-    async fn increase_usage(&self, amt: u64);
+    fn increase_usage(&self, amt: u32);
+
+    fn decrease_usage(&self, amt: u64);
+
+    fn on_disk_size(&self) -> u64;
 }
 
 pub enum CacheStream {

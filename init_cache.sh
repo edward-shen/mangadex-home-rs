@@ -6,4 +6,5 @@
 # We can trust that our program will initialize the db at runtime the same way
 # as it pulls from the same file for initialization
 
+mkdir cache
 sqlite3 cache/metadata.sqlite < db_queries/init.sql

@@ -1,13 +1,13 @@
 use actix_web::error::PayloadError;
 use bytes::{Buf, Bytes};
-use futures::{Stream, StreamExt};
+use futures::{Future, Stream, StreamExt};
 use log::{debug, error};
 use once_cell::sync::Lazy;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::io::SeekFrom;
-use std::num::NonZeroU64;
+use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -69,11 +69,15 @@ pub async fn read_file(
 
 /// Maps the input byte stream into one that writes to disk instead, returning
 /// a stream that reads from disk instead.
-pub async fn write_file(
+pub async fn write_file<
+    Fut: 'static + Send + Sync + Future<Output = ()>,
+    F: 'static + Send + Sync + FnOnce(u32) -> Fut,
+>(
     path: &Path,
     mut byte_stream: BoxedImageStream,
     metadata: ImageMetadata,
-    notifier: UnboundedSender<u64>,
+    notifier: UnboundedSender<u32>,
+    db_callback: F,
 ) -> Result<CacheStream, std::io::Error> {
     let (tx, rx) = channel(WritingStatus::NotDone);
 
@@ -93,7 +97,7 @@ pub async fn write_file(
     tokio::spawn(async move {
         let path_buf = path_buf; // moves path buf into async
         let mut errored = false;
-        let mut bytes_written: u64 = 0;
+        let mut bytes_written: u32 = 0;
         file.write_all(&metadata.as_bytes()).await?;
         while let Some(bytes) = byte_stream.next().await {
             if let Ok(mut bytes) = bytes {
@@ -103,7 +107,7 @@ pub async fn write_file(
                         n => {
                             bytes.advance(n);
                             // We don't care if we don't have receivers
-                            bytes_written += n as u64;
+                            bytes_written += n as u32;
                             let _ = tx.send(WritingStatus::NotDone);
                         }
                     }
@@ -146,6 +150,8 @@ pub async fn write_file(
             );
         }
 
+        tokio::spawn(db_callback(bytes_written));
+
         // We don't ever check this, so the return value doesn't matter
         Ok::<_, std::io::Error>(())
     });
@@ -158,8 +164,8 @@ pub async fn write_file(
 pub struct ConcurrentFsStream {
     file: Pin<Box<BufReader<File>>>,
     receiver: Pin<Box<WatchStream<WritingStatus>>>,
-    bytes_read: u64,
-    bytes_total: Option<NonZeroU64>,
+    bytes_read: u32,
+    bytes_total: Option<NonZeroU32>,
 }
 
 impl ConcurrentFsStream {
@@ -225,7 +231,7 @@ impl Stream for ConcurrentFsStream {
             if let Poll::Ready(Some(WritingStatus::Done(n))) =
                 self.receiver.as_mut().poll_next_unpin(cx)
             {
-                self.bytes_total = Some(NonZeroU64::new(n).unwrap())
+                self.bytes_total = Some(NonZeroU32::new(n).unwrap())
             }
 
             // Okay, now we know if we've read enough bytes or not. If the
@@ -248,7 +254,7 @@ impl Stream for ConcurrentFsStream {
             Poll::Ready(Some(Ok(Bytes::new())))
         } else {
             // We have data! Give it to the reader!
-            self.bytes_read += filled as u64;
+            self.bytes_read += filled as u32;
             bytes.truncate(filled);
             Poll::Ready(Some(Ok(bytes.into())))
         }
@@ -265,6 +271,6 @@ impl From<UpstreamError> for actix_web::Error {
 #[derive(Debug, Clone, Copy)]
 enum WritingStatus {
     NotDone,
-    Done(u64),
+    Done(u32),
     Error,
 }

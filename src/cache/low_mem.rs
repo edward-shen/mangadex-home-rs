@@ -1,29 +1,32 @@
 //! Low memory caching stuff
 
+use std::path::PathBuf;
 use std::str::FromStr;
-use std::sync::{atomic::Ordering, Arc};
-use std::{path::PathBuf, sync::atomic::AtomicU64};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures::StreamExt;
-use log::LevelFilter;
+use log::{warn, LevelFilter};
 use sqlx::{sqlite::SqliteConnectOptions, ConnectOptions, SqlitePool};
-use tokio::sync::mpsc::{channel, unbounded_channel, Sender, UnboundedSender};
+use tokio::{
+    fs::remove_file,
+    sync::mpsc::{channel, unbounded_channel, Sender, UnboundedSender},
+};
 use tokio_stream::wrappers::ReceiverStream;
 
 use super::{BoxedImageStream, Cache, CacheError, CacheKey, CacheStream, ImageMetadata};
 
 pub struct LowMemCache {
     disk_path: PathBuf,
-    disk_max_size: u64,
     disk_cur_size: AtomicU64,
-    file_size_channel_sender: UnboundedSender<u64>,
+    file_size_channel_sender: UnboundedSender<u32>,
     db_update_channel_sender: Sender<DbMessage>,
 }
 
 enum DbMessage {
     Get(Arc<CacheKey>),
-    Put(Arc<CacheKey>, ImageMetadata),
+    Put(PathBuf, u32),
 }
 
 impl LowMemCache {
@@ -53,7 +56,6 @@ impl LowMemCache {
 
         let new_self: Arc<Box<dyn Cache>> = Arc::new(Box::new(Self {
             disk_path,
-            disk_max_size,
             disk_cur_size: AtomicU64::new(0),
             file_size_channel_sender: file_size_tx,
             db_update_channel_sender: db_tx,
@@ -63,10 +65,30 @@ impl LowMemCache {
         // the channel, which informs the low memory cache the total size of the
         // item that was put into the cache.
         let new_self_0 = Arc::clone(&new_self);
+        let db_pool_0 = db_pool.clone();
         tokio::spawn(async move {
+            let db_pool = db_pool_0;
+            let max_on_disk_size = disk_max_size / 20 * 19;
             // This will never return None, effectively a loop
             while let Some(new_size) = file_size_rx.recv().await {
-                new_self_0.increase_usage(new_size).await;
+                new_self_0.increase_usage(new_size);
+                if new_self_0.on_disk_size() >= max_on_disk_size {
+                    let mut conn = db_pool.acquire().await.unwrap();
+                    let items = sqlx::query!(
+                        "select id, size from Images order by accessed asc limit 1000"
+                    )
+                    .fetch_all(&mut conn)
+                    .await
+                    .unwrap();
+
+                    let mut size_freed = 0;
+                    for item in items {
+                        size_freed += item.size as u64;
+                        tokio::spawn(remove_file(item.id));
+                    }
+
+                    new_self_0.decrease_usage(size_freed);
+                }
             }
         });
 
@@ -75,9 +97,39 @@ impl LowMemCache {
             let db_pool = db_pool;
             let mut recv_stream = ReceiverStream::new(db_rx).ready_chunks(128);
             while let Some(messages) = recv_stream.next().await {
+                let now = chrono::Utc::now();
                 let mut transaction = db_pool.begin().await.unwrap();
-                for message in messages {}
-
+                for message in messages {
+                    match message {
+                        DbMessage::Get(entry) => {
+                            let key = entry.to_string();
+                            let query = sqlx::query!(
+                                "update Images set accessed = ? where id = ?",
+                                now,
+                                key
+                            )
+                            .execute(&mut transaction)
+                            .await;
+                            if let Err(e) = query {
+                                warn!("Failed to update timestamp in db for {}: {}", key, e);
+                            }
+                        }
+                        DbMessage::Put(entry, size) => {
+                            let key = entry.as_os_str().to_str();
+                            let query = sqlx::query!(
+                                "insert into Images (id, size, accessed) values (?, ?, ?)",
+                                key,
+                                size,
+                                now,
+                            )
+                            .execute(&mut transaction)
+                            .await;
+                            if let Err(e) = query {
+                                warn!("Failed to add {:?} to db: {}", key, e);
+                            }
+                        }
+                    }
+                }
                 transaction.commit().await.unwrap();
             }
         });
@@ -113,22 +165,35 @@ impl Cache for LowMemCache {
         metadata: ImageMetadata,
     ) -> Result<CacheStream, CacheError> {
         let channel = self.db_update_channel_sender.clone();
-        let key_0 = Arc::clone(&key);
-        tokio::spawn(async move { channel.send(DbMessage::Put(key_0, metadata)).await });
 
         let path = self.disk_path.clone().join(PathBuf::from(key.as_ref()));
+        let path_0 = path.clone();
 
+        let db_callback = |size: u32| async move {
+            let _ = channel.send(DbMessage::Put(path_0, size)).await;
+        };
         super::fs::write_file(
             &path,
             image,
             metadata,
             self.file_size_channel_sender.clone(),
+            db_callback,
         )
         .await
         .map_err(Into::into)
     }
 
-    async fn increase_usage(&self, amt: u64) {
-        self.disk_cur_size.fetch_add(amt, Ordering::Release);
+    #[inline]
+    fn increase_usage(&self, amt: u32) {
+        self.disk_cur_size.fetch_add(amt as u64, Ordering::Release);
+    }
+
+    #[inline]
+    fn on_disk_size(&self) -> u64 {
+        (self.disk_cur_size.load(Ordering::Acquire) + 4095) / 4096 * 4096
+    }
+
+    fn decrease_usage(&self, amt: u64) {
+        self.disk_cur_size.fetch_sub(amt, Ordering::Release);
     }
 }
