@@ -11,7 +11,7 @@ use log::{warn, LevelFilter};
 use sqlx::{sqlite::SqliteConnectOptions, ConnectOptions, SqlitePool};
 use tokio::{
     fs::remove_file,
-    sync::mpsc::{channel, unbounded_channel, Sender, UnboundedSender},
+    sync::mpsc::{channel, Sender},
 };
 use tokio_stream::wrappers::ReceiverStream;
 
@@ -20,7 +20,6 @@ use super::{BoxedImageStream, Cache, CacheError, CacheKey, CacheStream, ImageMet
 pub struct LowMemCache {
     disk_path: PathBuf,
     disk_cur_size: AtomicU64,
-    file_size_channel_sender: UnboundedSender<u32>,
     db_update_channel_sender: Sender<DbMessage>,
 }
 
@@ -35,7 +34,6 @@ impl LowMemCache {
     /// notifications when a file has been written.
     #[allow(clippy::new_ret_no_self)]
     pub async fn new(disk_max_size: u64, disk_path: PathBuf) -> Arc<Box<dyn Cache>> {
-        let (file_size_tx, mut file_size_rx) = unbounded_channel();
         let (db_tx, db_rx) = channel(128);
         let db_pool = {
             let db_url = format!("sqlite:{}/metadata.sqlite", disk_path.to_str().unwrap());
@@ -57,7 +55,6 @@ impl LowMemCache {
         let new_self: Arc<Box<dyn Cache>> = Arc::new(Box::new(Self {
             disk_path,
             disk_cur_size: AtomicU64::new(0),
-            file_size_channel_sender: file_size_tx,
             db_update_channel_sender: db_tx,
         }));
 
@@ -65,36 +62,11 @@ impl LowMemCache {
         // the channel, which informs the low memory cache the total size of the
         // item that was put into the cache.
         let new_self_0 = Arc::clone(&new_self);
-        let db_pool_0 = db_pool.clone();
-        tokio::spawn(async move {
-            let db_pool = db_pool_0;
-            let max_on_disk_size = disk_max_size / 20 * 19;
-            // This will never return None, effectively a loop
-            while let Some(new_size) = file_size_rx.recv().await {
-                new_self_0.increase_usage(new_size);
-                if new_self_0.on_disk_size() >= max_on_disk_size {
-                    let mut conn = db_pool.acquire().await.unwrap();
-                    let items = sqlx::query!(
-                        "select id, size from Images order by accessed asc limit 1000"
-                    )
-                    .fetch_all(&mut conn)
-                    .await
-                    .unwrap();
-
-                    let mut size_freed = 0;
-                    for item in items {
-                        size_freed += item.size as u64;
-                        tokio::spawn(remove_file(item.id));
-                    }
-
-                    new_self_0.decrease_usage(size_freed);
-                }
-            }
-        });
 
         // Spawn a new task that will listen for updates to the db.
         tokio::spawn(async move {
             let db_pool = db_pool;
+            let max_on_disk_size = disk_max_size / 20 * 19;
             let mut recv_stream = ReceiverStream::new(db_rx).ready_chunks(128);
             while let Some(messages) = recv_stream.next().await {
                 let now = chrono::Utc::now();
@@ -127,10 +99,30 @@ impl LowMemCache {
                             if let Err(e) = query {
                                 warn!("Failed to add {:?} to db: {}", key, e);
                             }
+
+                            new_self_0.increase_usage(size);
                         }
                     }
                 }
                 transaction.commit().await.unwrap();
+
+                if new_self_0.on_disk_size() >= max_on_disk_size {
+                    let mut conn = db_pool.acquire().await.unwrap();
+                    let items = sqlx::query!(
+                        "select id, size from Images order by accessed asc limit 1000"
+                    )
+                    .fetch_all(&mut conn)
+                    .await
+                    .unwrap();
+
+                    let mut size_freed = 0;
+                    for item in items {
+                        size_freed += item.size as u64;
+                        tokio::spawn(remove_file(item.id));
+                    }
+
+                    new_self_0.decrease_usage(size_freed);
+                }
             }
         });
 
@@ -174,15 +166,9 @@ impl Cache for LowMemCache {
         let db_callback = |size: u32| async move {
             let _ = channel.send(DbMessage::Put(path_0, size)).await;
         };
-        super::fs::write_file(
-            &path,
-            image,
-            metadata,
-            self.file_size_channel_sender.clone(),
-            db_callback,
-        )
-        .await
-        .map_err(Into::into)
+        super::fs::write_file(&path, image, metadata, db_callback)
+            .await
+            .map_err(Into::into)
     }
 
     #[inline]

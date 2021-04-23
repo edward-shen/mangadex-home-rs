@@ -1,7 +1,7 @@
 use actix_web::error::PayloadError;
 use bytes::{Buf, Bytes};
 use futures::{Future, Stream, StreamExt};
-use log::{debug, error};
+use log::debug;
 use once_cell::sync::Lazy;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -13,7 +13,6 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::fs::{create_dir_all, remove_file, File};
 use tokio::io::{AsyncRead, AsyncSeekExt, AsyncWriteExt, BufReader, ReadBuf};
-use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::watch::{channel, Receiver};
 use tokio::sync::RwLock;
 use tokio_stream::wrappers::WatchStream;
@@ -76,7 +75,6 @@ pub async fn write_file<
     path: &Path,
     mut byte_stream: BoxedImageStream,
     metadata: ImageMetadata,
-    notifier: UnboundedSender<u32>,
     db_callback: F,
 ) -> Result<CacheStream, std::io::Error> {
     let (tx, rx) = channel(WritingStatus::NotDone);
@@ -140,14 +138,6 @@ pub async fn write_file<
                 let _ = tx.send(WritingStatus::Done(bytes_written));
             }
             write_lock.remove(&path_buf);
-        }
-
-        // notify
-        if let Err(e) = notifier.send(bytes_written) {
-            error!(
-                "Failed to notify cache of new entry size: {}. Cache no longer can prune FS!",
-                e
-            );
         }
 
         tokio::spawn(db_callback(bytes_written));
