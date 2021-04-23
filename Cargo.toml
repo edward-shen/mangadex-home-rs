@@ -39,4 +39,3 @@ url = { version = "2", features = [ "serde" ] }
 [profile.release]
 lto = true
 codegen-units = 1
-debug = true
