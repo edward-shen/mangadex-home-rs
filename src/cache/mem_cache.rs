@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use crate::cache::LowMemCache;
+use crate::cache::DiskCache;
 
 use super::{BoxedImageStream, Cache, CacheKey, CacheStream, ImageMetadata, MemStream};
 use async_trait::async_trait;
@@ -13,6 +13,7 @@ use tokio::sync::mpsc::{channel, Sender};
 use tokio::sync::Mutex;
 
 /// Memory accelerated disk cache. Uses an LRU in memory to speed up reads.
+///
 pub struct MemoryLruCache {
     inner: Arc<Box<dyn Cache>>,
     cur_mem_size: AtomicU64,
@@ -29,7 +30,7 @@ impl MemoryLruCache {
     ) -> Arc<Box<dyn Cache>> {
         let (tx, mut rx) = channel(100);
         let new_self = Arc::new(Box::new(Self {
-            inner: LowMemCache::new(disk_max_size, disk_path).await,
+            inner: DiskCache::new(disk_max_size, disk_path).await,
             cur_mem_size: AtomicU64::new(0),
             mem_cache: Mutex::new(LruCache::unbounded()),
             master_sender: tx,

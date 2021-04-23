@@ -17,7 +17,7 @@ use tokio::io::BufReader;
 use tokio::sync::mpsc::Sender;
 use tokio_util::codec::{BytesCodec, FramedRead};
 
-pub use disk_cache::LowMemCache;
+pub use disk_cache::DiskCache;
 pub use fs::UpstreamError;
 pub use mem_cache::MemoryLruCache;
 

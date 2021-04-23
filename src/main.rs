@@ -12,7 +12,7 @@ use std::{num::ParseIntError, sync::atomic::Ordering};
 use actix_web::rt::{spawn, time, System};
 use actix_web::web::{self, Data};
 use actix_web::{App, HttpServer};
-use cache::{Cache, LowMemCache};
+use cache::{Cache, DiskCache};
 use clap::Clap;
 use config::CliArgs;
 use log::{debug, error, warn, LevelFilter};
@@ -126,7 +126,7 @@ async fn main() -> Result<(), std::io::Error> {
     });
 
     let cache: Arc<Box<dyn Cache>> = if low_mem_mode {
-        LowMemCache::new(disk_quota, cache_path.clone()).await
+        DiskCache::new(disk_quota, cache_path.clone()).await
     } else {
         MemoryLruCache::new(disk_quota, cache_path.clone(), memory_max_size).await
     };

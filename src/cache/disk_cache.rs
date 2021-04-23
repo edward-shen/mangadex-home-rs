@@ -17,7 +17,7 @@ use tokio_stream::wrappers::ReceiverStream;
 
 use super::{BoxedImageStream, Cache, CacheError, CacheKey, CacheStream, ImageMetadata};
 
-pub struct LowMemCache {
+pub struct DiskCache {
     disk_path: PathBuf,
     disk_cur_size: AtomicU64,
     db_update_channel_sender: Sender<DbMessage>,
@@ -28,7 +28,7 @@ enum DbMessage {
     Put(Arc<PathBuf>, u32),
 }
 
-impl LowMemCache {
+impl DiskCache {
     /// Constructs a new low memory cache at the provided path and capaci ty.
     /// This internally spawns a task that will wait for filesystem
     /// notifications when a file has been written.
@@ -137,7 +137,7 @@ async fn db_listener(
 }
 
 #[async_trait]
-impl Cache for LowMemCache {
+impl Cache for DiskCache {
     async fn get(
         &self,
         key: &CacheKey,
