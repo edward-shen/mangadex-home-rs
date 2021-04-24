@@ -11,9 +11,9 @@ use serde::{Deserialize, Serialize};
 use sodiumoxide::crypto::box_::PrecomputedKey;
 use url::Url;
 
-use crate::config::CliArgs;
-use crate::state::PREVIOUSLY_PAUSED;
+use crate::state::{PREVIOUSLY_PAUSED, TLS_CERTS, TLS_SIGNING_KEY};
 use crate::{client_api_version, state::PREVIOUSLY_COMPROMISED};
+use crate::{config::CliArgs, state::TLS_PREVIOUSLY_CREATED};
 use crate::{config::VALIDATE_TOKENS, state::RwLockServerState};
 
 pub const CONTROL_CENTER_PING_URL: &str = "https://api.mangadex.network/ping";
@@ -42,7 +42,9 @@ impl<'a> Request<'a> {
             build_version: client_api_version!()
                 .parse()
                 .expect("to parse the build version"),
-            tls_created_at: Some(state.0.read().tls_config.created_at.clone()),
+            tls_created_at: TLS_PREVIOUSLY_CREATED
+                .get()
+                .map(|v| v.load().as_ref().to_owned()),
         }
     }
 }
@@ -182,7 +184,12 @@ pub async fn update_server_state(secret: &str, cli: &CliArgs, data: &mut Arc<RwL
                 }
 
                 if let Some(tls) = resp.tls {
-                    write_guard.tls_config = tls;
+                    TLS_PREVIOUSLY_CREATED
+                        .get()
+                        .unwrap()
+                        .swap(Arc::new(tls.created_at));
+                    TLS_SIGNING_KEY.get().unwrap().swap(tls.priv_key);
+                    TLS_CERTS.get().unwrap().swap(Arc::new(tls.certs));
                 }
 
                 let previously_compromised = PREVIOUSLY_COMPROMISED.load(Ordering::Acquire);

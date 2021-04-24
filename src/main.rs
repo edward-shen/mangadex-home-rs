@@ -25,6 +25,7 @@ use stop::send_stop;
 use thiserror::Error;
 
 use crate::cache::MemoryLruCache;
+use crate::state::DynamicServerCert;
 
 mod cache;
 mod config;
@@ -88,7 +89,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // What's nice is that Rustls only supports TLS 1.2 and 1.3.
     let mut tls_config = ServerConfig::new(NoClientAuth::new());
-    tls_config.cert_resolver = data_0.clone();
+    tls_config.cert_resolver = Arc::new(DynamicServerCert);
 
     //
     // At this point, the server is ready to start, and starts the necessary

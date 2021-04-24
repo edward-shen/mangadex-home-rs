@@ -1,11 +1,13 @@
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 
 use crate::config::{CliArgs, SEND_SERVER_VERSION, VALIDATE_TOKENS};
-use crate::ping::{Request, Response, Tls, CONTROL_CENTER_PING_URL};
+use crate::ping::{Request, Response, CONTROL_CENTER_PING_URL};
+use arc_swap::ArcSwap;
 use log::{error, info, warn};
+use once_cell::sync::OnceCell;
 use parking_lot::RwLock;
-use rustls::sign::CertifiedKey;
+use rustls::sign::{CertifiedKey, SigningKey};
+use rustls::Certificate;
 use rustls::{ClientHello, ResolvesServerCert};
 use sodiumoxide::crypto::box_::PrecomputedKey;
 use thiserror::Error;
@@ -14,13 +16,16 @@ use url::Url;
 pub struct ServerState {
     pub precomputed_key: PrecomputedKey,
     pub image_server: Url,
-    pub tls_config: Tls,
     pub url: Url,
     pub url_overridden: bool,
 }
 
 pub static PREVIOUSLY_PAUSED: AtomicBool = AtomicBool::new(false);
 pub static PREVIOUSLY_COMPROMISED: AtomicBool = AtomicBool::new(false);
+
+pub static TLS_PREVIOUSLY_CREATED: OnceCell<ArcSwap<String>> = OnceCell::new();
+pub static TLS_SIGNING_KEY: OnceCell<ArcSwap<Box<dyn SigningKey>>> = OnceCell::new();
+pub static TLS_CERTS: OnceCell<ArcSwap<Vec<Certificate>>> = OnceCell::new();
 
 #[derive(Error, Debug)]
 pub enum ServerInitError {
@@ -96,10 +101,14 @@ impl ServerState {
                         VALIDATE_TOKENS.store(resp.force_tokens, Ordering::Release);
                     }
 
+                    let tls = resp.tls.unwrap();
+                    TLS_PREVIOUSLY_CREATED.set(ArcSwap::from_pointee(tls.created_at));
+                    TLS_SIGNING_KEY.set(ArcSwap::new(tls.priv_key));
+                    TLS_CERTS.set(ArcSwap::from_pointee(tls.certs));
+
                     Ok(Self {
                         precomputed_key: key,
                         image_server: resp.image_server,
-                        tls_config: resp.tls.unwrap(),
                         url: resp.url,
                         url_overridden: config.override_upstream.is_some(),
                     })
@@ -125,14 +134,15 @@ impl ServerState {
 
 pub struct RwLockServerState(pub RwLock<ServerState>);
 
-impl ResolvesServerCert for RwLockServerState {
+pub struct DynamicServerCert;
+
+impl ResolvesServerCert for DynamicServerCert {
     fn resolve(&self, _: ClientHello) -> Option<CertifiedKey> {
         // TODO: wait for actix-web to use a new version of rustls so we can
         // remove cloning the certs all the time
-        let read_guard = self.0.read();
         Some(CertifiedKey {
-            cert: read_guard.tls_config.certs.clone(),
-            key: Arc::clone(&read_guard.tls_config.priv_key),
+            cert: TLS_CERTS.get().unwrap().load().as_ref().clone(),
+            key: TLS_SIGNING_KEY.get().unwrap().load_full(),
             ocsp: None,
             sct_list: None,
         })
