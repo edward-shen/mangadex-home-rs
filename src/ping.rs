@@ -11,10 +11,12 @@ use serde::{Deserialize, Serialize};
 use sodiumoxide::crypto::box_::PrecomputedKey;
 use url::Url;
 
-use crate::state::{PREVIOUSLY_PAUSED, TLS_CERTS, TLS_SIGNING_KEY};
-use crate::{client_api_version, state::PREVIOUSLY_COMPROMISED};
-use crate::{config::CliArgs, state::TLS_PREVIOUSLY_CREATED};
-use crate::{config::VALIDATE_TOKENS, state::RwLockServerState};
+use crate::client_api_version;
+use crate::config::{CliArgs, VALIDATE_TOKENS};
+use crate::state::{
+    RwLockServerState, PREVIOUSLY_COMPROMISED, PREVIOUSLY_PAUSED, TLS_CERTS,
+    TLS_PREVIOUSLY_CREATED, TLS_SIGNING_KEY,
+};
 
 pub const CONTROL_CENTER_PING_URL: &str = "https://api.mangadex.network/ping";
 
