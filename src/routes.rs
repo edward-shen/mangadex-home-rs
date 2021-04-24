@@ -64,7 +64,6 @@ async fn token_data(
             return ServerResponse::TokenValidationError(e);
         }
     }
-    coz::progress!();
     fetch_image(state, cache, chapter_hash, file_name, false).await
 }
 

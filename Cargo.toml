@@ -8,6 +8,11 @@ include = ["src/**/*", "db_queries", "LICENSE", "README.md"]
 description = "A MangaDex@Home implementation in Rust."
 repository = "https://github.com/edward-shen/mangadex-home-rs"
 
+[profile.release]
+lto = true
+codegen-units = 1
+debug = 1
+
 [dependencies]
 actix-web = { version = "4.0.0-beta.4", features = [ "rustls" ] }
 async-trait = "0.1"
@@ -35,8 +40,3 @@ tokio = { version = "1", features = [ "full", "parking_lot" ] }
 tokio-stream = { version = "0.1", features = [ "sync" ] }
 tokio-util = { version = "0.6", features = [ "codec" ] }
 url = { version = "2", features = [ "serde" ] }
-
-[profile.release]
-lto = true
-codegen-units = 1
-debug = 1

@@ -145,6 +145,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     })
     .shutdown_timeout(60)
     .bind_rustls(format!("0.0.0.0:{}", port), tls_config)?
+    // .bind(format!("0.0.0.0:{}", port))?
     .run()
     .await?;
 

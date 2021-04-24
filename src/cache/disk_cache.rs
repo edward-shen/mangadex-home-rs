@@ -175,7 +175,6 @@ impl Cache for DiskCache {
         &self,
         key: &CacheKey,
     ) -> Option<Result<(CacheStream, ImageMetadata), CacheError>> {
-        coz::scope!("disk cache get");
         let channel = self.db_update_channel_sender.clone();
 
         let path = Arc::new(self.disk_path.clone().join(PathBuf::from(key)));

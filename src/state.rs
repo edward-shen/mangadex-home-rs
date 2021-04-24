@@ -6,7 +6,7 @@ use crate::ping::{Request, Response, Tls, CONTROL_CENTER_PING_URL};
 use log::{error, info, warn};
 use parking_lot::RwLock;
 use rustls::sign::CertifiedKey;
-use rustls::ResolvesServerCert;
+use rustls::{ClientHello, ResolvesServerCert};
 use sodiumoxide::crypto::box_::PrecomputedKey;
 use thiserror::Error;
 use url::Url;
@@ -126,7 +126,9 @@ impl ServerState {
 pub struct RwLockServerState(pub RwLock<ServerState>);
 
 impl ResolvesServerCert for RwLockServerState {
-    fn resolve(&self, _: rustls::ClientHello) -> Option<CertifiedKey> {
+    fn resolve(&self, _: ClientHello) -> Option<CertifiedKey> {
+        // TODO: wait for actix-web to use a new version of rustls so we can
+        // remove cloning the certs all the time
         let read_guard = self.0.read();
         Some(CertifiedKey {
             cert: read_guard.tls_config.certs.clone(),
