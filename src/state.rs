@@ -102,9 +102,11 @@ impl ServerState {
                     }
 
                     let tls = resp.tls.unwrap();
-                    let _ = TLS_PREVIOUSLY_CREATED.set(ArcSwap::from_pointee(tls.created_at));
-                    let _ = TLS_SIGNING_KEY.set(ArcSwap::new(tls.priv_key));
-                    let _ = TLS_CERTS.set(ArcSwap::from_pointee(tls.certs));
+                    std::mem::drop(
+                        TLS_PREVIOUSLY_CREATED.set(ArcSwap::from_pointee(tls.created_at)),
+                    );
+                    std::mem::drop(TLS_SIGNING_KEY.set(ArcSwap::new(tls.priv_key)));
+                    std::mem::drop(TLS_CERTS.set(ArcSwap::from_pointee(tls.certs)));
 
                     Ok(Self {
                         precomputed_key: key,

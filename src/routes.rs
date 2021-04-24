@@ -25,7 +25,7 @@ use crate::state::RwLockServerState;
 
 pub const BASE64_CONFIG: base64::Config = base64::Config::new(base64::CharacterSet::UrlSafe, false);
 
-static HTTP_CLIENT: Lazy<Client> = Lazy::new(|| Client::new());
+static HTTP_CLIENT: Lazy<Client> = Lazy::new(Client::new);
 
 const SERVER_ID_STRING: &str = concat!(
     env!("CARGO_CRATE_NAME"),
