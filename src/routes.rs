@@ -12,6 +12,8 @@ use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use futures::{Stream, TryStreamExt};
 use log::{debug, error, info, warn};
+use once_cell::sync::Lazy;
+use reqwest::Client;
 use serde::Deserialize;
 use sodiumoxide::crypto::box_::{open_precomputed, Nonce, PrecomputedKey, NONCEBYTES};
 use thiserror::Error;
@@ -22,6 +24,8 @@ use crate::config::{SEND_SERVER_VERSION, VALIDATE_TOKENS};
 use crate::state::RwLockServerState;
 
 pub const BASE64_CONFIG: base64::Config = base64::Config::new(base64::CharacterSet::UrlSafe, false);
+
+static HTTP_CLIENT: Lazy<Client> = Lazy::new(|| Client::new());
 
 const SERVER_ID_STRING: &str = concat!(
     env!("CARGO_CRATE_NAME"),
@@ -60,7 +64,7 @@ async fn token_data(
             return ServerResponse::TokenValidationError(e);
         }
     }
-
+    coz::progress!();
     fetch_image(state, cache, chapter_hash, file_name, false).await
 }
 
@@ -89,7 +93,7 @@ pub async fn default(state: Data<RwLockServerState>, req: HttpRequest) -> impl R
         req.path().chars().skip(1).collect::<String>()
     );
     info!("Got unknown path, just proxying: {}", path);
-    let resp = match reqwest::get(path).await {
+    let resp = match HTTP_CLIENT.get(path).send().await {
         Ok(resp) => resp,
         Err(e) => {
             error!("{}", e);
@@ -207,19 +211,23 @@ async fn fetch_image(
     // holding the read lock until the await resolves.
 
     let resp = if is_data_saver {
-        reqwest::get(format!(
-            "{}/data-saver/{}/{}",
-            state.0.read().image_server,
-            &key.0,
-            &key.1
-        ))
+        HTTP_CLIENT
+            .get(format!(
+                "{}/data-saver/{}/{}",
+                state.0.read().image_server,
+                &key.0,
+                &key.1
+            ))
+            .send()
     } else {
-        reqwest::get(format!(
-            "{}/data/{}/{}",
-            state.0.read().image_server,
-            &key.0,
-            &key.1
-        ))
+        HTTP_CLIENT
+            .get(format!(
+                "{}/data/{}/{}",
+                state.0.read().image_server,
+                &key.0,
+                &key.1
+            ))
+            .send()
     }
     .await;
 
