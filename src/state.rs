@@ -102,9 +102,9 @@ impl ServerState {
                     }
 
                     let tls = resp.tls.unwrap();
-                    TLS_PREVIOUSLY_CREATED.set(ArcSwap::from_pointee(tls.created_at));
-                    TLS_SIGNING_KEY.set(ArcSwap::new(tls.priv_key));
-                    TLS_CERTS.set(ArcSwap::from_pointee(tls.certs));
+                    let _ = TLS_PREVIOUSLY_CREATED.set(ArcSwap::from_pointee(tls.created_at));
+                    let _ = TLS_SIGNING_KEY.set(ArcSwap::new(tls.priv_key));
+                    let _ = TLS_CERTS.set(ArcSwap::from_pointee(tls.certs));
 
                     Ok(Self {
                         precomputed_key: key,

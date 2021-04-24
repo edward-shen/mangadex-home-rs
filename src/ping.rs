@@ -29,11 +29,7 @@ pub struct Request<'a> {
 }
 
 impl<'a> Request<'a> {
-    fn from_config_and_state(
-        secret: &'a str,
-        config: &CliArgs,
-        state: &Arc<RwLockServerState>,
-    ) -> Self {
+    fn from_config_and_state(secret: &'a str, config: &CliArgs) -> Self {
         Self {
             secret,
             port: config.port,
@@ -147,7 +143,7 @@ impl std::fmt::Debug for Tls {
 }
 
 pub async fn update_server_state(secret: &str, cli: &CliArgs, data: &mut Arc<RwLockServerState>) {
-    let req = Request::from_config_and_state(secret, cli, data);
+    let req = Request::from_config_and_state(secret, cli);
     let client = reqwest::Client::new();
     let resp = client.post(CONTROL_CENTER_PING_URL).json(&req).send().await;
     match resp {

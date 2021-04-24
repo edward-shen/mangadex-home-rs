@@ -1,3 +1,19 @@
+//! This module contains two functions whose sole purpose is to allow a single
+//! producer multiple consumer (SPMC) system using the filesystem as an
+//! intermediate.
+//!
+//! Consider the scenario where two clients, A and B, request the same uncached
+//! file, one after the other. In a typical caching system, both requests would
+//! result in a cache miss, and both requests would then be proxied from
+//! upstream. But, we can do better. We know that by the time one request
+//! begins, there should be a file on disk for us to read from. Why require
+//! subsequent requests to read from upstream, when we can simply fetch one and
+//! read from the filesystem that we know will have the exact same data?
+//! Instead, we can just read from the filesystem and just inform all readers
+//! when the file is done. This is beneficial to both downstream and upstream as
+//! upstream no longer needs to process duplicate requests and sequential cache
+//! misses are treated as closer as a cache hit.
+
 use actix_web::error::PayloadError;
 use bytes::{Buf, Bytes, BytesMut};
 use futures::{Future, Stream, StreamExt};
@@ -40,7 +56,9 @@ use super::{BoxedImageStream, CacheKey, CacheStream, CacheStreamItem, ImageMetad
 static WRITING_STATUS: Lazy<RwLock<HashMap<PathBuf, Receiver<WritingStatus>>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 
-/// Tries to read from the file, returning a byte stream if it exists
+/// Attempts to lookup the file on disk, returning a byte stream if it exists.
+/// Note that this could return two types of streams, depending on if the file
+/// is in progress of being written to.
 pub async fn read_file(
     path: &Path,
 ) -> Option<Result<(CacheStream, ImageMetadata), std::io::Error>> {
@@ -52,8 +70,8 @@ pub async fn read_file(
         ImageMetadata::deserialize(&mut de).ok()?
     };
 
-    // False positive, `file` is used in both cases, which means that it's not
-    // possible to move this into a map_or_else without cloning `file`.
+    // False positive lint, `file` is used in both cases, which means that it's
+    // not possible to move this into a map_or_else without cloning `file`.
     #[allow(clippy::option_if_let_else)]
     let stream = if let Some(status) = WRITING_STATUS.read().await.get(path).map(Clone::clone) {
         CacheStream::Concurrent(ConcurrentFsStream::from_file(
@@ -67,19 +85,22 @@ pub async fn read_file(
     Some(Ok((stream, metadata)))
 }
 
-/// Maps the input byte stream into one that writes to disk instead, returning
-/// a stream that reads from disk instead.
-pub async fn write_file<
-    Fut: 'static + Send + Sync + Future<Output = ()>,
-    DbCallback: 'static + Send + Sync + FnOnce(u32) -> Fut,
->(
+/// Writes the metadata and input stream (in that order) to a file, returning a
+/// stream that reads from that file. Accepts a db callback function that is
+/// provided the number of bytes written, and an optional on-complete callback
+/// that is called with a completed cache entry.
+pub async fn write_file<Fut, DbCallback>(
     path: &Path,
     cache_key: CacheKey,
     mut byte_stream: BoxedImageStream,
     metadata: ImageMetadata,
     db_callback: DbCallback,
     on_complete: Option<Sender<(CacheKey, Bytes, ImageMetadata, usize)>>,
-) -> Result<CacheStream, std::io::Error> {
+) -> Result<CacheStream, std::io::Error>
+where
+    Fut: 'static + Send + Sync + Future<Output = ()>,
+    DbCallback: 'static + Send + Sync + FnOnce(u32) -> Fut,
+{
     let (tx, rx) = channel(WritingStatus::NotDone);
 
     let mut file = {
@@ -114,8 +135,8 @@ pub async fn write_file<
                         0 => break,
                         n => {
                             bytes.advance(n);
-                            // We don't care if we don't have receivers
                             bytes_written += n as u32;
+                            // We don't care if we don't have receivers
                             let _ = tx.send(WritingStatus::NotDone);
                         }
                     }
@@ -151,6 +172,7 @@ pub async fn write_file<
         }
 
         tokio::spawn(db_callback(bytes_written));
+
         if let Some(sender) = on_complete {
             tokio::spawn(async move {
                 sender

@@ -223,6 +223,7 @@ impl Cache for DiskCache {
         (self.disk_cur_size.load(Ordering::Acquire) + 4095) / 4096 * 4096
     }
 
+    #[inline]
     fn mem_size(&self) -> u64 {
         0
     }
