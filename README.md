@@ -8,8 +8,16 @@ This client contains the following features:
 
 ## Building
 
+Since we use SQLx there are a few things you'll need to do. First, you'll need
+to run the init cache script, which initializes the db cache at
+`./cache/metadata.sqlite`. Then you'll need to add the location of that to a
+`.env` file:
+
 ```sh
-cargo build --release
+# In the project root
+./init_cache.sh
+echo "DATABASE_URL=sqlite:./cache/metadata.sqlite" >> .env
+cargo build
 ```
 
 ## Cache implementation
