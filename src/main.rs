@@ -24,7 +24,7 @@ use state::{RwLockServerState, ServerState};
 use stop::send_stop;
 use thiserror::Error;
 
-use crate::cache::MemoryLruCache;
+use crate::cache::{MemoryLfuCache, MemoryLruCache};
 use crate::state::DynamicServerCert;
 
 mod cache;
@@ -60,6 +60,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let disk_quota = cli_args.disk_quota;
     let cache_path = cli_args.cache_path.clone();
     let low_mem_mode = cli_args.low_memory;
+    let use_lfu = cli_args.use_lfu;
 
     let log_level = match (cli_args.quiet, cli_args.verbose) {
         (n, _) if n > 2 => LevelFilter::Off,
@@ -130,7 +131,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cache: Arc<Box<dyn Cache>> = if low_mem_mode {
         DiskCache::new(disk_quota, cache_path.clone()).await
     } else {
-        MemoryLruCache::new(disk_quota, cache_path.clone(), memory_max_size).await
+        if use_lfu {
+            MemoryLfuCache::new(disk_quota, cache_path.clone(), memory_max_size).await
+        } else {
+            MemoryLruCache::new(disk_quota, cache_path.clone(), memory_max_size).await
+        }
     };
 
     let cache_0 = Arc::clone(&cache);

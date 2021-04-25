@@ -21,6 +21,7 @@ use log::debug;
 use once_cell::sync::Lazy;
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::error::Error;
 use std::fmt::Display;
 use std::io::SeekFrom;
 use std::num::NonZeroU32;
@@ -196,9 +197,15 @@ where
 }
 
 pub struct ConcurrentFsStream {
+    /// The File to read from
     file: Pin<Box<BufReader<File>>>,
+    /// The channel to get updates from. The writer must send its status, else
+    /// this reader will never complete.
     receiver: Pin<Box<WatchStream<WritingStatus>>>,
+    /// The number of bytes the reader has read
     bytes_read: u32,
+    /// The number of bytes that the writer has reported it has written. If the
+    /// writer has not reported yet, this value is None.
     bytes_total: Option<NonZeroU32>,
 }
 
@@ -227,7 +234,7 @@ impl ConcurrentFsStream {
 #[derive(Debug)]
 pub struct UpstreamError;
 
-impl std::error::Error for UpstreamError {}
+impl Error for UpstreamError {}
 
 impl Display for UpstreamError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

@@ -36,16 +36,17 @@ pub struct CliArgs {
     /// reasons.
     #[clap(long, env = "ENABLE_SERVER_STRING", takes_value = false)]
     pub enable_server_string: bool,
+    /// Changes the caching behavior to avoid buffering images in memory, and
+    /// instead use the filesystem as the buffer backing. This is useful for
+    /// clients in low (< 1GB) RAM environments.
     #[clap(
         short,
         long,
         conflicts_with("memory-quota"),
+        conflicts_with("use-lfu"),
         env = "LOW_MEMORY_MODE",
         takes_value = false
     )]
-    /// Changes the caching behavior to avoid buffering images in memory, and
-    /// instead use the filesystem as the buffer backing. This is useful for
-    /// clients in low (< 1GB) RAM environments.
     pub low_memory: bool,
     /// Changes verbosity. Default verbosity is INFO, while increasing counts of
     /// verbose flags increases the verbosity to DEBUG and TRACE, respectively.
@@ -64,4 +65,8 @@ pub struct CliArgs {
     /// ramifications of this command.
     #[clap(long)]
     pub disable_token_validation: bool,
+    /// Use an LFU implementation for the in-memory cache instead of the default
+    /// LRU implementation.
+    #[clap(short = 'F', long)]
+    pub use_lfu: bool,
 }

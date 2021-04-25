@@ -948,6 +948,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "lfu_cache"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "33bfa6580d3aa7abe1f17d413dc9952d726eb588a0a8082821444cb89ffdabdf"
+
+[[package]]
 name = "libc"
 version = "0.2.93"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1035,6 +1041,7 @@ dependencies = [
  "ctrlc",
  "dotenv",
  "futures",
+ "lfu_cache",
  "log",
  "lru",
  "once_cell",

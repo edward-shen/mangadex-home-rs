@@ -17,13 +17,15 @@ use tokio::io::BufReader;
 use tokio::sync::mpsc::Sender;
 use tokio_util::codec::{BytesCodec, FramedRead};
 
-pub use disk_cache::DiskCache;
+pub use disk::DiskCache;
 pub use fs::UpstreamError;
-pub use mem_cache::MemoryLruCache;
+pub use mem_lfu::MemoryLfuCache;
+pub use mem_lru::MemoryLruCache;
 
-mod disk_cache;
+mod disk;
 mod fs;
-mod mem_cache;
+mod mem_lfu;
+mod mem_lru;
 
 #[derive(PartialEq, Eq, Hash, Clone)]
 pub struct CacheKey(pub String, pub String, pub bool);
