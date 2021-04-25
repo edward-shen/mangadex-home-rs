@@ -1,4 +1,4 @@
-A Rust implementation of a Mangadex @ Home client.
+A Rust implementation of a MangaDex@Home client.
 
 This client contains the following features:
 
