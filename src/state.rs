@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::config::{CliArgs, SEND_SERVER_VERSION, VALIDATE_TOKENS};
+use crate::config::{CliArgs, UnstableOptions, SEND_SERVER_VERSION, VALIDATE_TOKENS};
 use crate::ping::{Request, Response, CONTROL_CENTER_PING_URL};
 use arc_swap::ArcSwap;
 use log::{error, info, warn};
@@ -90,7 +90,10 @@ impl ServerState {
 
                     info!("This client's URL has been set to {}", resp.url);
 
-                    if config.disable_token_validation {
+                    if config
+                        .unstable_options
+                        .contains(&UnstableOptions::DisableTokenValidation)
+                    {
                         warn!("Token validation is explicitly disabled!");
                     } else {
                         if resp.force_tokens {
@@ -116,17 +119,17 @@ impl ServerState {
                     })
                 }
                 Err(e) => {
-                    warn!("Got malformed response: {}", e);
+                    error!("Got malformed response: {}. Is MangaDex@Home down?", e);
                     Err(ServerInitError::MalformedResponse(e))
                 }
             },
             Err(e) => match e {
                 e if e.is_timeout() => {
-                    error!("Response timed out to control server. Is MangaDex down?");
+                    error!("Response timed out to control server. Is MangaDex@Home down?");
                     Err(ServerInitError::Timeout(e))
                 }
                 e => {
-                    warn!("Failed to send request: {}", e);
+                    error!("Failed to send request: {}", e);
                     Err(ServerInitError::SendFailure(e))
                 }
             },

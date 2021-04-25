@@ -11,12 +11,12 @@ use serde::{Deserialize, Serialize};
 use sodiumoxide::crypto::box_::PrecomputedKey;
 use url::Url;
 
-use crate::client_api_version;
 use crate::config::{CliArgs, VALIDATE_TOKENS};
 use crate::state::{
     RwLockServerState, PREVIOUSLY_COMPROMISED, PREVIOUSLY_PAUSED, TLS_CERTS,
     TLS_PREVIOUSLY_CREATED, TLS_SIGNING_KEY,
 };
+use crate::{client_api_version, config::UnstableOptions};
 
 pub const CONTROL_CENTER_PING_URL: &str = "https://api.mangadex.network/ping";
 
@@ -170,7 +170,9 @@ pub async fn update_server_state(secret: &str, cli: &CliArgs, data: &mut Arc<RwL
                     }
                 }
 
-                if !cli.disable_token_validation
+                if !cli
+                    .unstable_options
+                    .contains(&UnstableOptions::DisableTokenValidation)
                     && VALIDATE_TOKENS.load(Ordering::Acquire) != resp.force_tokens
                 {
                     if resp.force_tokens {

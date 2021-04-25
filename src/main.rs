@@ -2,13 +2,16 @@
 // We're end users, so these is ok
 #![allow(clippy::module_name_repetitions)]
 
-use std::env::{self, VarError};
-use std::hint::unreachable_unchecked;
 use std::num::ParseIntError;
 use std::process;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+use std::{
+    env::{self, VarError},
+    fmt::Display,
+};
+use std::{error::Error, hint::unreachable_unchecked};
 
 use actix_web::rt::{spawn, time, System};
 use actix_web::web::{self, Data};
@@ -24,8 +27,11 @@ use state::{RwLockServerState, ServerState};
 use stop::send_stop;
 use thiserror::Error;
 
-use crate::cache::{MemoryLfuCache, MemoryLruCache};
 use crate::state::DynamicServerCert;
+use crate::{
+    cache::{MemoryLfuCache, MemoryLruCache},
+    config::UnstableOptions,
+};
 
 mod cache;
 mod config;
@@ -50,7 +56,7 @@ enum ServerError {
 }
 
 #[actix_web::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), Box<dyn Error>> {
     // It's ok to fail early here, it would imply we have a invalid config.
     dotenv::dotenv().ok();
     let cli_args = CliArgs::parse();
@@ -60,7 +66,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let disk_quota = cli_args.disk_quota;
     let cache_path = cli_args.cache_path.clone();
     let low_mem_mode = cli_args.low_memory;
-    let use_lfu = cli_args.use_lfu;
+    let use_lfu = cli_args.unstable_options.contains(&UnstableOptions::UseLfu);
 
     let log_level = match (cli_args.quiet, cli_args.verbose) {
         (n, _) if n > 2 => LevelFilter::Off,
@@ -74,7 +80,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     SimpleLogger::new().with_level(log_level).init()?;
 
-    print_preamble_and_warnings();
+    if let Err(e) = print_preamble_and_warnings(&cli_args) {
+        error!("{}", e);
+        return Err(e);
+    }
 
     let client_secret = if let Ok(v) = env::var("CLIENT_SECRET") {
         v
@@ -163,7 +172,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn print_preamble_and_warnings() {
+#[derive(Debug)]
+enum InvalidCombination {
+    MissingUnstableOption(&'static str, UnstableOptions),
+}
+
+impl Display for InvalidCombination {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            InvalidCombination::MissingUnstableOption(opt, arg) => {
+                write!(
+                    f,
+                    "The option '{}' requires the unstable option '-Z {}'",
+                    opt, arg
+                )
+            }
+        }
+    }
+}
+
+impl Error for InvalidCombination {}
+
+fn print_preamble_and_warnings(args: &CliArgs) -> Result<(), Box<dyn Error>> {
     println!(concat!(
         env!("CARGO_PKG_NAME"),
         " ",
@@ -186,4 +216,21 @@ fn print_preamble_and_warnings() {
         env!("CARGO_PKG_NAME"),
         ". If not, see <https://www.gnu.org/licenses/>.\n"
     ));
+
+    if !args.unstable_options.is_empty() {
+        warn!("Unstable options are enabled. These options should not be used in production!");
+    }
+
+    if args.override_upstream.is_some()
+        && !args
+            .unstable_options
+            .contains(&UnstableOptions::OverrideUpstream)
+    {
+        Err(Box::new(InvalidCombination::MissingUnstableOption(
+            "override-upstream",
+            UnstableOptions::OverrideUpstream,
+        )))
+    } else {
+        Ok(())
+    }
 }

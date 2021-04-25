@@ -1,6 +1,9 @@
-use std::num::{NonZeroU16, NonZeroU64};
-use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
+use std::{fmt::Display, path::PathBuf};
+use std::{fmt::Formatter, sync::atomic::AtomicBool};
+use std::{
+    num::{NonZeroU16, NonZeroU64},
+    str::FromStr,
+};
 
 use clap::{crate_authors, crate_description, crate_version, Clap};
 use url::Url;
@@ -43,7 +46,6 @@ pub struct CliArgs {
         short,
         long,
         conflicts_with("memory-quota"),
-        conflicts_with("use-lfu"),
         env = "LOW_MEMORY_MODE",
         takes_value = false
     )]
@@ -57,16 +59,46 @@ pub struct CliArgs {
     /// respectively.
     #[clap(short, long, parse(from_occurrences), conflicts_with = "verbose")]
     pub quiet: usize,
-    /// Overrides the upstream URL to fetch images from. Don't use this unless
-    /// you know what you're dealing with.
+    #[clap(short = 'Z', long)]
+    pub unstable_options: Vec<UnstableOptions>,
     #[clap(long)]
     pub override_upstream: Option<Url>,
-    /// Disables token validation. Don't use this unless you know the
-    /// ramifications of this command.
-    #[clap(long)]
-    pub disable_token_validation: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UnstableOptions {
+    /// Overrides the upstream URL to fetch images from. Don't use this unless
+    /// you know what you're dealing with.
+    OverrideUpstream,
+
     /// Use an LFU implementation for the in-memory cache instead of the default
     /// LRU implementation.
-    #[clap(short = 'F', long)]
-    pub use_lfu: bool,
+    UseLfu,
+
+    /// Disables token validation. Don't use this unless you know the
+    /// ramifications of this command.
+    DisableTokenValidation,
+}
+
+impl FromStr for UnstableOptions {
+    type Err = &'static str;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "override-upstream" => Ok(Self::OverrideUpstream),
+            "use-lfu" => Ok(Self::UseLfu),
+            "disable-token-validation" => Ok(Self::DisableTokenValidation),
+            _ => Err("Unknown unstable option"),
+        }
+    }
+}
+
+impl Display for UnstableOptions {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::OverrideUpstream => write!(f, "override-upstream"),
+            Self::UseLfu => write!(f, "use-lfu"),
+            Self::DisableTokenValidation => write!(f, "disable-token-validation"),
+        }
+    }
 }
