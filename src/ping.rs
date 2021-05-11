@@ -155,8 +155,9 @@ pub async fn update_server_state(secret: &str, cli: &CliArgs, data: &mut Arc<RwL
                 let mut write_guard = data.0.write();
 
                 if !write_guard.url_overridden && write_guard.image_server != resp.image_server {
-                    warn!("Ignoring new upstream url!");
                     write_guard.image_server = resp.image_server;
+                } else {
+                    warn!("Ignoring new upstream url!");
                 }
 
                 if let Some(key) = resp.token_key {
