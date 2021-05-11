@@ -19,13 +19,11 @@ use tokio_util::codec::{BytesCodec, FramedRead};
 
 pub use disk::DiskCache;
 pub use fs::UpstreamError;
-pub use mem_lfu::MemoryLfuCache;
-pub use mem_lru::MemoryLruCache;
+pub use mem::MemoryCache;
 
 mod disk;
 mod fs;
-mod mem_lfu;
-mod mem_lru;
+pub mod mem;
 
 #[derive(PartialEq, Eq, Hash, Clone)]
 pub struct CacheKey(pub String, pub String, pub bool);

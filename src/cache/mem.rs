@@ -9,18 +9,31 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use futures::FutureExt;
 use lfu_cache::LfuCache;
+use lru::LruCache;
 use tokio::sync::mpsc::{channel, Sender};
 use tokio::sync::Mutex;
 
+type CacheValue = (Bytes, ImageMetadata, usize);
+
+pub type Lru = LruCache<CacheKey, CacheValue>;
+pub type Lfu = LfuCache<CacheKey, CacheValue>;
+
+pub trait InternalMemoryCache: Sync + Send {
+    fn unbounded() -> Self;
+    fn get(&mut self, key: &CacheKey) -> Option<&CacheValue>;
+    fn push(&mut self, key: CacheKey, data: CacheValue);
+    fn pop(&mut self) -> Option<(CacheKey, CacheValue)>;
+}
+
 /// Memory accelerated disk cache. Uses an LRU in memory to speed up reads.
-pub struct MemoryLfuCache {
+pub struct MemoryCache<InternalCacheImpl> {
     inner: Arc<Box<dyn Cache>>,
     cur_mem_size: AtomicU64,
-    mem_cache: Mutex<LfuCache<CacheKey, (Bytes, ImageMetadata, usize)>>,
+    mem_cache: Mutex<InternalCacheImpl>,
     master_sender: Sender<(CacheKey, Bytes, ImageMetadata, usize)>,
 }
 
-impl MemoryLfuCache {
+impl<InternalCacheImpl: 'static + InternalMemoryCache> MemoryCache<InternalCacheImpl> {
     #[allow(clippy::new_ret_no_self)]
     pub async fn new(
         disk_max_size: u64,
@@ -31,7 +44,7 @@ impl MemoryLfuCache {
         let new_self = Arc::new(Box::new(Self {
             inner: DiskCache::new(disk_max_size, disk_path).await,
             cur_mem_size: AtomicU64::new(0),
-            mem_cache: Mutex::new(LfuCache::unbounded()),
+            mem_cache: Mutex::new(InternalCacheImpl::unbounded()),
             master_sender: tx,
         }) as Box<dyn Cache>);
 
@@ -57,7 +70,7 @@ impl MemoryLfuCache {
 }
 
 #[async_trait]
-impl Cache for MemoryLfuCache {
+impl<InternalCacheImpl: InternalMemoryCache> Cache for MemoryCache<InternalCacheImpl> {
     #[inline]
     async fn get(
         &self,
@@ -131,7 +144,7 @@ impl Cache for MemoryLfuCache {
         self.mem_cache
             .lock()
             .await
-            .insert(key, (image, metadata, size));
+            .push(key, (image, metadata, size));
     }
 
     #[inline]
@@ -139,7 +152,51 @@ impl Cache for MemoryLfuCache {
         self.mem_cache
             .lock()
             .await
-            .pop_lfu_key_value()
+            .pop()
             .map(|(key, (bytes, metadata, size))| (key, bytes, metadata, size))
+    }
+}
+
+impl InternalMemoryCache for Lfu {
+    #[inline]
+    fn unbounded() -> Self {
+        Self::unbounded()
+    }
+
+    #[inline]
+    fn get(&mut self, key: &CacheKey) -> Option<&CacheValue> {
+        self.get(key)
+    }
+
+    #[inline]
+    fn push(&mut self, key: CacheKey, data: CacheValue) {
+        self.insert(key, data);
+    }
+
+    #[inline]
+    fn pop(&mut self) -> Option<(CacheKey, CacheValue)> {
+        self.pop_lfu_key_value()
+    }
+}
+
+impl InternalMemoryCache for Lru {
+    #[inline]
+    fn unbounded() -> Self {
+        Self::unbounded()
+    }
+
+    #[inline]
+    fn get(&mut self, key: &CacheKey) -> Option<&CacheValue> {
+        self.get(key)
+    }
+
+    #[inline]
+    fn push(&mut self, key: CacheKey, data: CacheValue) {
+        self.put(key, data);
+    }
+
+    #[inline]
+    fn pop(&mut self) -> Option<(CacheKey, CacheValue)> {
+        self.pop_lru()
     }
 }

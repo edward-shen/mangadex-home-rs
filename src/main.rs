@@ -27,11 +27,9 @@ use state::{RwLockServerState, ServerState};
 use stop::send_stop;
 use thiserror::Error;
 
+use crate::cache::{mem, MemoryCache};
+use crate::config::UnstableOptions;
 use crate::state::DynamicServerCert;
-use crate::{
-    cache::{MemoryLfuCache, MemoryLruCache},
-    config::UnstableOptions,
-};
 
 mod cache;
 mod config;
@@ -141,9 +139,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         DiskCache::new(disk_quota, cache_path.clone()).await
     } else {
         if use_lfu {
-            MemoryLfuCache::new(disk_quota, cache_path.clone(), memory_max_size).await
+            MemoryCache::<mem::Lfu>::new(disk_quota, cache_path.clone(), memory_max_size).await
         } else {
-            MemoryLruCache::new(disk_quota, cache_path.clone(), memory_max_size).await
+            MemoryCache::<mem::Lru>::new(disk_quota, cache_path.clone(), memory_max_size).await
         }
     };
 
