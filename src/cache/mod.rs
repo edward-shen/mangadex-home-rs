@@ -10,7 +10,10 @@ use bytes::{Bytes, BytesMut};
 use chrono::{DateTime, FixedOffset};
 use fs::ConcurrentFsStream;
 use futures::{Stream, StreamExt};
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
+use serde_repr::{Deserialize_repr, Serialize_repr};
+use sodiumoxide::crypto::secretstream::{gen_key, Header, Key, Pull, Stream as SecretStream};
 use thiserror::Error;
 use tokio::fs::File;
 use tokio::io::BufReader;
@@ -20,6 +23,8 @@ use tokio_util::codec::{BytesCodec, FramedRead};
 pub use disk::DiskCache;
 pub use fs::UpstreamError;
 pub use mem::MemoryCache;
+
+static ENCRYPTION_KEY: Lazy<Key> = Lazy::new(gen_key);
 
 mod disk;
 mod fs;
@@ -63,7 +68,8 @@ pub struct ImageMetadata {
 }
 
 // Confirmed by Ply to be these types: https://link.eddie.sh/ZXfk0
-#[derive(Copy, Clone, Serialize, Deserialize)]
+#[derive(Copy, Clone, Serialize_repr, Deserialize_repr)]
+#[repr(u8)]
 pub enum ImageContentType {
     Png = 0,
     Jpeg,
@@ -152,6 +158,8 @@ pub enum CacheError {
     Reqwest(#[from] reqwest::Error),
     #[error(transparent)]
     Upstream(#[from] UpstreamError),
+    #[error("An error occurred while reading the decryption header")]
+    DecryptionFailure,
 }
 
 #[async_trait]
@@ -198,13 +206,52 @@ pub trait Cache: Send + Sync {
     async fn pop_memory(&self) -> Option<(CacheKey, Bytes, ImageMetadata, usize)>;
 }
 
-pub enum CacheStream {
+pub struct CacheStream {
+    inner: InnerStream,
+    decrypt: Option<SecretStream<Pull>>,
+}
+
+impl CacheStream {
+    pub(self) fn new(inner: InnerStream, header: Option<Header>) -> Result<Self, ()> {
+        Ok(Self {
+            inner,
+            decrypt: header
+                .map(|header| SecretStream::init_pull(&header, &ENCRYPTION_KEY))
+                .transpose()?,
+        })
+    }
+}
+
+impl Stream for CacheStream {
+    type Item = CacheStreamItem;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.inner.poll_next_unpin(cx).map(|data| {
+            // False positive (`data`): https://link.eddie.sh/r1fXX
+            #[allow(clippy::option_if_let_else)]
+            if let Some(keystream) = self.decrypt.as_mut() {
+                data.map(|bytes_res| {
+                    bytes_res.and_then(|bytes| {
+                        keystream
+                            .pull(&bytes, None)
+                            .map(|(data, _tag)| Bytes::from(data))
+                            .map_err(|_| UpstreamError)
+                    })
+                })
+            } else {
+                data
+            }
+        })
+    }
+}
+
+pub(self) enum InnerStream {
     Concurrent(ConcurrentFsStream),
     Memory(MemStream),
     Completed(FramedRead<BufReader<File>, BytesCodec>),
 }
 
-impl From<CachedImage> for CacheStream {
+impl From<CachedImage> for InnerStream {
     fn from(image: CachedImage) -> Self {
         Self::Memory(MemStream(image.0))
     }
@@ -212,7 +259,7 @@ impl From<CachedImage> for CacheStream {
 
 type CacheStreamItem = Result<Bytes, UpstreamError>;
 
-impl Stream for CacheStream {
+impl Stream for InnerStream {
     type Item = CacheStreamItem;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {

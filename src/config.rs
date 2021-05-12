@@ -1,9 +1,8 @@
-use std::{fmt::Display, path::PathBuf};
-use std::{fmt::Formatter, sync::atomic::AtomicBool};
-use std::{
-    num::{NonZeroU16, NonZeroU64},
-    str::FromStr,
-};
+use std::fmt::{Display, Formatter};
+use std::num::{NonZeroU16, NonZeroU64};
+use std::path::PathBuf;
+use std::str::FromStr;
+use std::sync::atomic::AtomicBool;
 
 use clap::{crate_authors, crate_description, crate_version, Clap};
 use url::Url;
@@ -22,8 +21,8 @@ pub struct CliArgs {
     pub port: NonZeroU16,
     /// How large, in bytes, the in-memory cache should be. Note that this does
     /// not include runtime memory usage.
-    #[clap(long, env = "MEM_CACHE_QUOTA_BYTES")]
-    pub memory_quota: NonZeroU64,
+    #[clap(long, env = "MEM_CACHE_QUOTA_BYTES", conflicts_with = "low-memory")]
+    pub memory_quota: Option<NonZeroU64>,
     /// How large, in bytes, the on-disk cache should be. Note that actual
     /// values may be larger for metadata information.
     #[clap(long, env = "DISK_CACHE_QUOTA_BYTES")]
@@ -63,6 +62,11 @@ pub struct CliArgs {
     pub unstable_options: Vec<UnstableOptions>,
     #[clap(long)]
     pub override_upstream: Option<Url>,
+    /// Enables ephemeral disk encryption. Items written to disk are first
+    /// encrypted with a key generated at runtime. There are implications to
+    /// performance, privacy, and usability with this flag enabled.
+    #[clap(short, long)]
+    pub ephemeral_disk_encryption: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

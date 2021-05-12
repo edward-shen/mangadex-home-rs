@@ -19,7 +19,8 @@ use bytes::{Buf, Bytes, BytesMut};
 use futures::{Future, Stream, StreamExt};
 use log::debug;
 use once_cell::sync::Lazy;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use sodiumoxide::crypto::secretstream::Header;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::Display;
@@ -36,7 +37,13 @@ use tokio::sync::RwLock;
 use tokio_stream::wrappers::WatchStream;
 use tokio_util::codec::{BytesCodec, FramedRead};
 
-use super::{BoxedImageStream, CacheKey, CacheStream, CacheStreamItem, ImageMetadata};
+use super::{BoxedImageStream, CacheKey, CacheStreamItem, ImageMetadata, InnerStream};
+
+#[derive(Serialize, Deserialize)]
+pub enum OnDiskMetadata {
+    Encrypted(Header, ImageMetadata),
+    Plaintext(ImageMetadata),
+}
 
 /// Keeps track of files that are currently being written to.
 ///
@@ -60,9 +67,9 @@ static WRITING_STATUS: Lazy<RwLock<HashMap<PathBuf, Receiver<WritingStatus>>>> =
 /// Attempts to lookup the file on disk, returning a byte stream if it exists.
 /// Note that this could return two types of streams, depending on if the file
 /// is in progress of being written to.
-pub async fn read_file(
+pub(super) async fn read_file(
     path: &Path,
-) -> Option<Result<(CacheStream, ImageMetadata), std::io::Error>> {
+) -> Option<Result<(InnerStream, Option<Header>, ImageMetadata), std::io::Error>> {
     let std_file = std::fs::File::open(path).ok()?;
     let file = File::from_std(std_file.try_clone().ok()?);
 
@@ -75,29 +82,29 @@ pub async fn read_file(
     // not possible to move this into a map_or_else without cloning `file`.
     #[allow(clippy::option_if_let_else)]
     let stream = if let Some(status) = WRITING_STATUS.read().await.get(path).map(Clone::clone) {
-        CacheStream::Concurrent(ConcurrentFsStream::from_file(
+        InnerStream::Concurrent(ConcurrentFsStream::from_file(
             file,
             WatchStream::new(status),
         ))
     } else {
-        CacheStream::Completed(FramedRead::new(BufReader::new(file), BytesCodec::new()))
+        InnerStream::Completed(FramedRead::new(BufReader::new(file), BytesCodec::new()))
     };
 
-    Some(Ok((stream, metadata)))
+    Some(Ok((stream, None, metadata)))
 }
 
 /// Writes the metadata and input stream (in that order) to a file, returning a
 /// stream that reads from that file. Accepts a db callback function that is
 /// provided the number of bytes written, and an optional on-complete callback
 /// that is called with a completed cache entry.
-pub async fn write_file<Fut, DbCallback>(
+pub(super) async fn write_file<Fut, DbCallback>(
     path: &Path,
     cache_key: CacheKey,
     mut byte_stream: BoxedImageStream,
     metadata: ImageMetadata,
     db_callback: DbCallback,
     on_complete: Option<Sender<(CacheKey, Bytes, ImageMetadata, usize)>>,
-) -> Result<CacheStream, std::io::Error>
+) -> Result<(InnerStream, Option<Header>), std::io::Error>
 where
     Fut: 'static + Send + Sync + Future<Output = ()>,
     DbCallback: 'static + Send + Sync + FnOnce(u32) -> Fut,
@@ -150,8 +157,10 @@ where
 
         if errored {
             // It's ok if the deleting the file fails, since we truncate on
-            // create anyways, but it should be best effort
-            let _ = remove_file(&path_buf).await;
+            // create anyways, but it should be best effort.
+            //
+            // We don't care about the result of the call.
+            std::mem::drop(remove_file(&path_buf).await);
         } else {
             file.flush().await?;
             file.sync_all().await?; // we need metadata
@@ -191,8 +200,11 @@ where
         Ok::<_, std::io::Error>(())
     });
 
-    Ok(CacheStream::Concurrent(
-        ConcurrentFsStream::new(path, metadata_size, WatchStream::new(rx)).await?,
+    Ok((
+        InnerStream::Concurrent(
+            ConcurrentFsStream::new(path, metadata_size, WatchStream::new(rx)).await?,
+        ),
+        None,
     ))
 }
 

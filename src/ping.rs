@@ -42,7 +42,7 @@ impl<'a> Request<'a> {
                 .expect("to parse the build version"),
             tls_created_at: TLS_PREVIOUSLY_CREATED
                 .get()
-                .map(|v| v.load().as_ref().to_owned()),
+                .map(|v| v.load().as_ref().clone()),
         }
     }
 }

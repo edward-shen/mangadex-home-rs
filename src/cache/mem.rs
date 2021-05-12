@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use crate::cache::DiskCache;
 
-use super::{BoxedImageStream, Cache, CacheKey, CacheStream, ImageMetadata, MemStream};
+use super::{
+    BoxedImageStream, Cache, CacheKey, CacheStream, ImageMetadata, InnerStream, MemStream,
+};
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures::FutureExt;
@@ -15,9 +17,12 @@ use tokio::sync::Mutex;
 
 type CacheValue = (Bytes, ImageMetadata, usize);
 
+/// Use LRU as the eviction strategy
 pub type Lru = LruCache<CacheKey, CacheValue>;
+/// Use LFU as the eviction strategy
 pub type Lfu = LfuCache<CacheKey, CacheValue>;
 
+/// Adapter trait for memory cache backends
 pub trait InternalMemoryCache: Sync + Send {
     fn unbounded() -> Self;
     fn get(&mut self, key: &CacheKey) -> Option<&CacheValue>;
@@ -25,7 +30,8 @@ pub trait InternalMemoryCache: Sync + Send {
     fn pop(&mut self) -> Option<(CacheKey, CacheValue)>;
 }
 
-/// Memory accelerated disk cache. Uses an LRU in memory to speed up reads.
+/// Memory accelerated disk cache. Uses the internal cache implementation in
+/// memory to speed up reads.
 pub struct MemoryCache<InternalCacheImpl> {
     inner: Arc<Box<dyn Cache>>,
     cur_mem_size: AtomicU64,
@@ -78,9 +84,9 @@ impl<InternalCacheImpl: InternalMemoryCache> Cache for MemoryCache<InternalCache
     ) -> Option<Result<(CacheStream, ImageMetadata), super::CacheError>> {
         match self.mem_cache.lock().now_or_never() {
             Some(mut mem_cache) => match mem_cache.get(key).map(|(bytes, metadata, _)| {
-                Ok((CacheStream::Memory(MemStream(bytes.clone())), *metadata))
+                Ok((InnerStream::Memory(MemStream(bytes.clone())), *metadata))
             }) {
-                Some(v) => Some(v),
+                Some(v) => Some(v.map(|(inner, metadata)| todo!())),
                 None => self.inner.get(key).await,
             },
             None => self.inner.get(key).await,

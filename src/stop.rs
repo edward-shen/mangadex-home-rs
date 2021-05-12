@@ -1,4 +1,5 @@
 use log::{info, warn};
+use reqwest::StatusCode;
 use serde::Serialize;
 
 const CONTROL_CENTER_STOP_URL: &str = "https://api.mangadex.network/ping";
@@ -18,7 +19,7 @@ pub async fn send_stop(secret: &str) {
         .await
     {
         Ok(resp) => {
-            if resp.status() == 200 {
+            if resp.status() == StatusCode::OK {
                 info!("Successfully sent stop message to control center.");
             } else {
                 warn!("Got weird response from server: {:?}", resp.headers());

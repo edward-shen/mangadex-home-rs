@@ -2,16 +2,15 @@
 // We're end users, so these is ok
 #![allow(clippy::module_name_repetitions)]
 
-use std::num::ParseIntError;
+use std::env::{self, VarError};
+use std::error::Error;
+use std::fmt::Display;
+use std::hint::unreachable_unchecked;
+use std::num::{NonZeroU64, ParseIntError};
 use std::process;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use std::{
-    env::{self, VarError},
-    fmt::Display,
-};
-use std::{error::Error, hint::unreachable_unchecked};
 
 use actix_web::rt::{spawn, time, System};
 use actix_web::web::{self, Data};
@@ -55,12 +54,16 @@ enum ServerError {
 
 #[actix_web::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    sodiumoxide::init().expect("Failed to initialize crypto");
     // It's ok to fail early here, it would imply we have a invalid config.
     dotenv::dotenv().ok();
     let cli_args = CliArgs::parse();
 
     let port = cli_args.port;
-    let memory_max_size = cli_args.memory_quota.get();
+    let memory_max_size = cli_args
+        .memory_quota
+        .map(NonZeroU64::get)
+        .unwrap_or_default();
     let disk_quota = cli_args.disk_quota;
     let cache_path = cli_args.cache_path.clone();
     let low_mem_mode = cli_args.low_memory;
@@ -137,12 +140,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let cache: Arc<Box<dyn Cache>> = if low_mem_mode {
         DiskCache::new(disk_quota, cache_path.clone()).await
+    } else if use_lfu {
+        MemoryCache::<mem::Lfu>::new(disk_quota, cache_path.clone(), memory_max_size).await
     } else {
-        if use_lfu {
-            MemoryCache::<mem::Lfu>::new(disk_quota, cache_path.clone(), memory_max_size).await
-        } else {
-            MemoryCache::<mem::Lru>::new(disk_quota, cache_path.clone(), memory_max_size).await
-        }
+        MemoryCache::<mem::Lru>::new(disk_quota, cache_path.clone(), memory_max_size).await
     };
 
     let cache_0 = Arc::clone(&cache);

@@ -13,7 +13,7 @@ use chrono::{DateTime, Utc};
 use futures::{Stream, TryStreamExt};
 use log::{debug, error, info, warn};
 use once_cell::sync::Lazy;
-use reqwest::Client;
+use reqwest::{Client, StatusCode};
 use serde::Deserialize;
 use sodiumoxide::crypto::box_::{open_precomputed, Nonce, PrecomputedKey, NONCEBYTES};
 use thiserror::Error;
@@ -238,7 +238,7 @@ async fn fetch_image(
                 .map(|v| String::from_utf8_lossy(v.as_ref()).contains("image/"))
                 .unwrap_or_default();
 
-            if resp.status() != 200 || !is_image {
+            if resp.status() != StatusCode::OK || !is_image {
                 warn!(
                     "Got non-OK or non-image response code from upstream, proxying and not caching result.",
                 );
@@ -283,7 +283,7 @@ async fn fetch_image(
 
             debug!("Done putting into cache");
 
-            return construct_response(stream, &metadata);
+            construct_response(stream, &metadata)
         }
         Err(e) => {
             error!("Failed to fetch image from server: {}", e);

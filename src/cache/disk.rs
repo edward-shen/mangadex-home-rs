@@ -182,9 +182,12 @@ impl Cache for DiskCache {
 
         tokio::spawn(async move { channel.send(DbMessage::Get(path_0)).await });
 
-        super::fs::read_file(&path)
-            .await
-            .map(|res| res.map_err(Into::into))
+        super::fs::read_file(&path).await.map(|res| {
+            let (inner, maybe_header, metadata) = res?;
+            CacheStream::new(inner, maybe_header)
+                .map(|stream| (stream, metadata))
+                .map_err(|_| CacheError::DecryptionFailure)
+        })
     }
 
     async fn put(
@@ -204,7 +207,10 @@ impl Cache for DiskCache {
 
         super::fs::write_file(&path, key, image, metadata, db_callback, None)
             .await
-            .map_err(Into::into)
+            .map_err(CacheError::from)
+            .and_then(|(inner, maybe_header)| {
+                CacheStream::new(inner, maybe_header).map_err(|_| CacheError::DecryptionFailure)
+            })
     }
 
     #[inline]
@@ -241,12 +247,16 @@ impl Cache for DiskCache {
         let path_0 = Arc::clone(&path);
 
         let db_callback = |size: u32| async move {
-            let _ = channel.send(DbMessage::Put(path_0, size)).await;
+            // We don't care about the result of the send
+            std::mem::drop(channel.send(DbMessage::Put(path_0, size)).await);
         };
 
         super::fs::write_file(&path, key, image, metadata, db_callback, Some(on_complete))
             .await
-            .map_err(Into::into)
+            .map_err(CacheError::from)
+            .and_then(|(inner, maybe_header)| {
+                CacheStream::new(inner, maybe_header).map_err(|_| CacheError::DecryptionFailure)
+            })
     }
 
     #[inline]
