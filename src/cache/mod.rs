@@ -2,6 +2,7 @@ use std::fmt::Display;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use actix_web::http::HeaderValue;
@@ -175,7 +176,7 @@ pub trait Cache: Send + Sync {
 }
 
 #[async_trait]
-impl<T: Cache> Cache for std::sync::Arc<T> {
+impl<T: Cache> Cache for Arc<T> {
     #[inline]
     async fn get(
         &self,
@@ -207,7 +208,7 @@ pub trait CallbackCache: Cache {
 }
 
 #[async_trait]
-impl<T: CallbackCache> CallbackCache for std::sync::Arc<T> {
+impl<T: CallbackCache> CallbackCache for Arc<T> {
     #[inline]
     async fn put_with_on_completed_callback(
         &self,
