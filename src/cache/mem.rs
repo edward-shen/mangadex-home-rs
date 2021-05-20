@@ -74,22 +74,24 @@ impl InternalMemoryCache for Lru {
 
 /// Memory accelerated disk cache. Uses the internal cache implementation in
 /// memory to speed up reads.
-pub struct MemoryCache<InternalCacheImpl, InnerCache> {
-    inner: InnerCache,
+pub struct MemoryCache<MemoryCacheImpl, ColdCache> {
+    inner: ColdCache,
     cur_mem_size: AtomicU64,
-    mem_cache: Mutex<InternalCacheImpl>,
+    mem_cache: Mutex<MemoryCacheImpl>,
     master_sender: Sender<(CacheKey, Bytes, ImageMetadata, u64)>,
 }
 
-impl<InternalCacheImpl: 'static + InternalMemoryCache, InnerCache: 'static + Cache>
-    MemoryCache<InternalCacheImpl, InnerCache>
+impl<MemoryCacheImpl, ColdCache> MemoryCache<MemoryCacheImpl, ColdCache>
+where
+    MemoryCacheImpl: 'static + InternalMemoryCache,
+    ColdCache: 'static + Cache,
 {
-    pub async fn new(inner: InnerCache, max_mem_size: u64) -> Arc<Self> {
+    pub async fn new(inner: ColdCache, max_mem_size: u64) -> Arc<Self> {
         let (tx, mut rx) = channel(100);
         let new_self = Arc::new(Self {
             inner,
             cur_mem_size: AtomicU64::new(0),
-            mem_cache: Mutex::new(InternalCacheImpl::unbounded()),
+            mem_cache: Mutex::new(MemoryCacheImpl::unbounded()),
             master_sender: tx,
         });
 
@@ -99,6 +101,7 @@ impl<InternalCacheImpl: 'static + InternalMemoryCache, InnerCache: 'static + Cac
             let max_mem_size = max_mem_size / 20 * 19;
             while let Some((key, bytes, metadata, size)) = rx.recv().await {
                 // Add to memory cache
+                // We can add first because we constrain our memory usage to 95%
                 new_self
                     .cur_mem_size
                     .fetch_add(size as u64, Ordering::Release);
@@ -132,10 +135,10 @@ impl<InternalCacheImpl: 'static + InternalMemoryCache, InnerCache: 'static + Cac
 }
 
 #[async_trait]
-impl<InternalCacheImpl, InnerCache> Cache for MemoryCache<InternalCacheImpl, InnerCache>
+impl<MemoryCacheImpl, ColdCache> Cache for MemoryCache<MemoryCacheImpl, ColdCache>
 where
-    InternalCacheImpl: InternalMemoryCache,
-    InnerCache: CallbackCache,
+    MemoryCacheImpl: InternalMemoryCache,
+    ColdCache: CallbackCache,
 {
     #[inline]
     async fn get(

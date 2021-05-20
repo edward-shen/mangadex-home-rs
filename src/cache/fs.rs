@@ -91,14 +91,23 @@ pub(super) async fn read_file(
                 return None;
             }
 
-            Box::pin(EncryptedDiskReader::new(
-                file,
-                SecretStream::init_pull(
-                    &Header::from_slice(&header_bytes).expect("failed to get header"),
-                    key,
-                )
-                .expect("Failed to initialize decryption kesy"),
-            ))
+            let header = match Header::from_slice(&header_bytes) {
+                Some(header) => header,
+                None => {
+                    warn!("Found file, but encrypted header was invalid. Assuming corrupted!");
+                    return None;
+                }
+            };
+
+            let secret_stream = match SecretStream::init_pull(&header, key) {
+                Ok(stream) => stream,
+                Err(_) => {
+                    warn!("Failed to init secret stream with key and header. Assuming corrupted!");
+                    return None;
+                }
+            };
+
+            Box::pin(EncryptedDiskReader::new(file, secret_stream))
         } else {
             Box::pin(file)
         };
