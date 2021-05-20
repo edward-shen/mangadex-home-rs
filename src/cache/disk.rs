@@ -175,11 +175,7 @@ async fn db_listener(
 
             let mut size_freed = 0;
             for item in items {
-                // Can't be helped, SQLite doesn't support unsigned integers
-                #[allow(clippy::cast_sign_loss)]
-                {
-                    size_freed += item.size as u64;
-                }
+                size_freed += item.size as u64;
                 tokio::spawn(remove_file(item.id));
             }
 
