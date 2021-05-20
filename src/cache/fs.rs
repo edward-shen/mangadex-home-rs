@@ -78,8 +78,7 @@ static WRITING_STATUS: Lazy<RwLock<HashMap<PathBuf, Receiver<WritingStatus>>>> =
 pub(super) async fn read_file(
     path: &Path,
 ) -> Option<Result<(InnerStream, Option<Header>, ImageMetadata), std::io::Error>> {
-    let std_file = std::fs::File::open(path).ok()?;
-    let mut file = File::from_std(std_file.try_clone().ok()?);
+    let mut file = File::open(path).await.ok()?;
 
     let mut reader = {
         // If the encryption key was set, use the encrypted disk reader instead;
