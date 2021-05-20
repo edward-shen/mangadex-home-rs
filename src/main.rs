@@ -18,15 +18,16 @@ use actix_web::{App, HttpServer};
 use cache::{Cache, DiskCache};
 use clap::Clap;
 use config::CliArgs;
-use log::{debug, error, warn, LevelFilter};
+use log::{debug, error, info, warn, LevelFilter};
 use parking_lot::RwLock;
 use rustls::{NoClientAuth, ServerConfig};
 use simple_logger::SimpleLogger;
+use sodiumoxide::crypto::secretstream::gen_key;
 use state::{RwLockServerState, ServerState};
 use stop::send_stop;
 use thiserror::Error;
 
-use crate::cache::{mem, MemoryCache};
+use crate::cache::{mem, MemoryCache, ENCRYPTION_KEY};
 use crate::config::UnstableOptions;
 use crate::state::DynamicServerCert;
 
@@ -76,6 +77,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         (0, 0) => LevelFilter::Info,
         (_, 1) => LevelFilter::Debug,
         (_, n) if n > 1 => LevelFilter::Trace,
+        // compiler can't figure it out
         _ => unsafe { unreachable_unchecked() },
     };
 
@@ -93,6 +95,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
         process::exit(1);
     };
     let client_secret_1 = client_secret.clone();
+
+    if cli_args.ephemeral_disk_encryption {
+        info!("Running with at-rest encryption!");
+        ENCRYPTION_KEY.set(gen_key()).unwrap();
+    }
 
     let server = ServerState::init(&client_secret, &cli_args).await?;
     let data_0 = Arc::new(RwLockServerState(RwLock::new(server)));
@@ -119,7 +126,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             if running_2.load(Ordering::SeqCst) {
                 send_stop(&client_secret).await;
             } else {
-                warn!("Got second ctrl-c, forcefully exiting");
+                warn!("Got second Ctrl-C, forcefully exiting");
                 system.stop()
             }
         });
@@ -159,7 +166,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     })
     .shutdown_timeout(60)
     .bind_rustls(format!("0.0.0.0:{}", port), tls_config)?
-    // .bind(format!("0.0.0.0:{}", port))?
     .run()
     .await?;
 

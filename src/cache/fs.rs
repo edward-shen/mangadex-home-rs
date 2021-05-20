@@ -17,10 +17,12 @@
 use actix_web::error::PayloadError;
 use bytes::{Buf, Bytes, BytesMut};
 use futures::{Future, Stream, StreamExt};
-use log::debug;
+use log::{debug, warn};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
-use sodiumoxide::crypto::secretstream::Header;
+use sodiumoxide::crypto::secretstream::{
+    Header, Pull, Push, Stream as SecretStream, Tag, HEADERBYTES,
+};
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::Display;
@@ -30,14 +32,19 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::fs::{create_dir_all, remove_file, File};
-use tokio::io::{AsyncRead, AsyncSeekExt, AsyncWriteExt, BufReader, ReadBuf};
+use tokio::io::{
+    AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, BufReader,
+    ReadBuf,
+};
 use tokio::sync::mpsc::Sender;
 use tokio::sync::watch::{channel, Receiver};
 use tokio::sync::RwLock;
 use tokio_stream::wrappers::WatchStream;
 use tokio_util::codec::{BytesCodec, FramedRead};
 
-use super::{BoxedImageStream, CacheKey, CacheStreamItem, ImageMetadata, InnerStream};
+use super::{
+    BoxedImageStream, CacheKey, CacheStreamItem, ImageMetadata, InnerStream, ENCRYPTION_KEY,
+};
 
 #[derive(Serialize, Deserialize)]
 pub enum OnDiskMetadata {
@@ -71,26 +78,116 @@ pub(super) async fn read_file(
     path: &Path,
 ) -> Option<Result<(InnerStream, Option<Header>, ImageMetadata), std::io::Error>> {
     let std_file = std::fs::File::open(path).ok()?;
-    let file = File::from_std(std_file.try_clone().ok()?);
+    let mut file = File::from_std(std_file.try_clone().ok()?);
+
+    let mut reader = {
+        // If the encryption key was set, use the encrypted disk reader instead;
+        // else, just directly read from file.
+        let inner_reader: Pin<Box<dyn AsyncRead + Send>> = if let Some(key) = ENCRYPTION_KEY.get() {
+            let mut header_bytes = [0; HEADERBYTES];
+            if file.read_exact(&mut header_bytes).await.is_err() {
+                warn!("Found file, but encrypted header was not found. Assuming corrupted!");
+                return None;
+            }
+
+            Box::pin(EncryptedDiskReader::new(
+                file,
+                SecretStream::init_pull(
+                    &Header::from_slice(&header_bytes).expect("failed to get header"),
+                    key,
+                )
+                .expect("Failed to initialize decryption kesy"),
+            ))
+        } else {
+            Box::pin(file)
+        };
+
+        BufReader::new(inner_reader)
+    };
 
     let metadata = {
-        let mut de = serde_json::Deserializer::from_reader(std_file);
-        ImageMetadata::deserialize(&mut de).ok()?
+        let mut read = String::new();
+        reader
+            .read_line(&mut read)
+            .await
+            .expect("failed to read metadata");
+        serde_json::from_str(&read).ok()?
     };
+
+    let reader = Box::pin(reader);
 
     // False positive lint, `file` is used in both cases, which means that it's
     // not possible to move this into a map_or_else without cloning `file`.
     #[allow(clippy::option_if_let_else)]
     let stream = if let Some(status) = WRITING_STATUS.read().await.get(path).map(Clone::clone) {
-        InnerStream::Concurrent(ConcurrentFsStream::from_file(
-            file,
+        InnerStream::Concurrent(ConcurrentFsStream::from_reader(
+            reader,
             WatchStream::new(status),
         ))
     } else {
-        InnerStream::Completed(FramedRead::new(BufReader::new(file), BytesCodec::new()))
+        InnerStream::Completed(FramedRead::new(reader, BytesCodec::new()))
     };
 
     Some(Ok((stream, None, metadata)))
+}
+
+struct EncryptedDiskReader {
+    file: Pin<Box<File>>,
+    stream: SecretStream<Pull>,
+    buf: Vec<u8>,
+}
+
+impl EncryptedDiskReader {
+    fn new(file: File, stream: SecretStream<Pull>) -> Self {
+        Self {
+            file: Box::pin(file),
+            stream,
+            buf: vec![],
+        }
+    }
+}
+
+impl AsyncRead for EncryptedDiskReader {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        let cursor_start = buf.filled().len();
+
+        let res = self.as_mut().file.as_mut().poll_read(cx, buf);
+        if res.is_pending() {
+            return Poll::Pending;
+        }
+
+        let cursor_new = buf.filled().len();
+
+        // pull_to_vec internally calls vec.clear() and vec.reserve(). Generally
+        // speaking we should be reading about the same amount of data each time
+        // so we shouldn't experience too much of a slow down w.r.t resizing the
+        // buffer...
+        let new_self = Pin::into_inner(self);
+        new_self
+            .stream
+            .pull_to_vec(
+                &buf.filled()[cursor_start..cursor_new],
+                None,
+                &mut new_self.buf,
+            )
+            .unwrap();
+
+        // data is strictly smaller than the encrypted stream, since you need to
+        // encode tags as well, so this is always safe.
+
+        // rewrite encrypted data into decrypted data
+        let buffer = buf.filled_mut();
+        for (old, new) in buffer[cursor_start..].iter_mut().zip(&new_self.buf) {
+            *old = *new;
+        }
+        buf.set_filled(cursor_start + &new_self.buf.len());
+
+        res
+    }
 }
 
 /// Writes the metadata and input stream (in that order) to a file, returning a
@@ -111,7 +208,7 @@ where
 {
     let (tx, rx) = channel(WritingStatus::NotDone);
 
-    let mut file = {
+    let file = {
         let mut write_lock = WRITING_STATUS.write().await;
         let parent = path.parent().expect("The path to have a parent");
         create_dir_all(parent).await?;
@@ -122,6 +219,17 @@ where
 
     let metadata_string = serde_json::to_string(&metadata).expect("serialization to work");
     let metadata_size = metadata_string.len();
+
+    let (mut writer, maybe_header): (Pin<Box<dyn AsyncWrite + Send>>, _) =
+        if let Some((enc, header)) = ENCRYPTION_KEY
+            .get()
+            .map(|key| SecretStream::init_push(key).expect("Failed to init enc stream"))
+        {
+            (Box::pin(EncryptedDiskWriter::new(file, enc)), Some(header))
+        } else {
+            (Box::pin(file), None)
+        };
+
     // need owned variant because async lifetime
     let path_buf = path.to_path_buf();
     tokio::spawn(async move {
@@ -130,7 +238,8 @@ where
         let mut bytes_written: u32 = 0;
         let mut acc_bytes = BytesMut::new();
         let accumulate = on_complete.is_some();
-        file.write_all(metadata_string.as_bytes()).await?;
+        writer.write_all(metadata_string.as_bytes()).await?;
+        writer.write_all(b"\n").await?;
 
         while let Some(bytes) = byte_stream.next().await {
             if let Ok(mut bytes) = bytes {
@@ -139,7 +248,7 @@ where
                 }
 
                 loop {
-                    match file.write(&bytes).await? {
+                    match writer.write(&bytes).await? {
                         0 => break,
                         n => {
                             bytes.advance(n);
@@ -162,8 +271,8 @@ where
             // We don't care about the result of the call.
             std::mem::drop(remove_file(&path_buf).await);
         } else {
-            file.flush().await?;
-            file.sync_all().await?; // we need metadata
+            writer.flush().await?;
+            // writer.sync_all().await?; // we need metadata
             debug!("writing to file done");
         }
 
@@ -204,13 +313,81 @@ where
         InnerStream::Concurrent(
             ConcurrentFsStream::new(path, metadata_size, WatchStream::new(rx)).await?,
         ),
-        None,
+        maybe_header,
     ))
+}
+
+struct EncryptedDiskWriter {
+    file: Pin<Box<File>>,
+    stream: Option<SecretStream<Push>>,
+    encryption_buffer: Vec<u8>,
+    write_buffer: Vec<u8>,
+}
+
+impl EncryptedDiskWriter {
+    fn new(file: File, stream: SecretStream<Push>) -> Self {
+        Self {
+            file: Box::pin(file),
+            stream: Some(stream),
+            encryption_buffer: vec![],
+            write_buffer: vec![],
+        }
+    }
+}
+
+impl AsyncWrite for EncryptedDiskWriter {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<Result<usize, std::io::Error>> {
+        let new_self = Pin::into_inner(self);
+        {
+            let encryption_buffer = &mut new_self.encryption_buffer;
+            new_self.stream.as_mut().map(|stream| {
+                stream
+                    .push_to_vec(buf, None, Tag::Message, encryption_buffer)
+                    .expect("Failed to write encrypted data to buffer");
+            });
+        }
+
+        new_self.write_buffer.extend(&new_self.encryption_buffer);
+
+        match new_self
+            .file
+            .as_mut()
+            .poll_write(cx, &new_self.write_buffer)
+        {
+            Poll::Ready(Ok(n)) => {
+                new_self.write_buffer.drain(..n);
+                Poll::Ready(Ok(n))
+            }
+            poll => poll,
+        }
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<(), std::io::Error>> {
+        self.file.as_mut().poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<(), std::io::Error>> {
+        self.as_mut()
+            .stream
+            .take()
+            .map(|stream| stream.finalize(None));
+        self.file.as_mut().poll_shutdown(cx)
+    }
 }
 
 pub struct ConcurrentFsStream {
     /// The File to read from
-    file: Pin<Box<BufReader<File>>>,
+    reader: Pin<Box<dyn AsyncRead + Send>>,
     /// The channel to get updates from. The writer must send its status, else
     /// this reader will never complete.
     receiver: Pin<Box<WatchStream<WritingStatus>>>,
@@ -229,12 +406,15 @@ impl ConcurrentFsStream {
     ) -> Result<Self, std::io::Error> {
         let mut file = File::open(path).await?;
         file.seek(SeekFrom::Start(seek as u64)).await?;
-        Ok(Self::from_file(file, receiver))
+        Ok(Self::from_reader(Box::pin(file), receiver))
     }
 
-    fn from_file(file: File, receiver: WatchStream<WritingStatus>) -> Self {
+    fn from_reader(
+        reader: Pin<Box<dyn AsyncRead + Send>>,
+        receiver: WatchStream<WritingStatus>,
+    ) -> Self {
         Self {
-            file: Box::pin(BufReader::new(file)),
+            reader: Box::pin(reader),
             receiver: Box::pin(receiver),
             bytes_read: 0,
             bytes_total: None,
@@ -263,7 +443,7 @@ impl Stream for ConcurrentFsStream {
         // TODO: Might be more efficient to have a larger buffer
         let mut bytes = [0; 4 * 1024].to_vec();
         let mut buffer = ReadBuf::new(&mut bytes);
-        match self.file.as_mut().poll_read(cx, &mut buffer) {
+        match self.reader.as_mut().poll_read(cx, &mut buffer) {
             Poll::Ready(Ok(_)) => (),
             Poll::Ready(Err(_)) => return Poll::Ready(Some(Err(UpstreamError))),
             Poll::Pending => return Poll::Pending,
@@ -326,4 +506,10 @@ enum WritingStatus {
     NotDone,
     Done(u32),
     Error,
+}
+
+#[cfg(test)]
+mod storage {
+    #[test]
+    fn wut() {}
 }

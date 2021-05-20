@@ -5,7 +5,8 @@ use std::sync::Arc;
 use crate::cache::DiskCache;
 
 use super::{
-    BoxedImageStream, Cache, CacheKey, CacheStream, ImageMetadata, InnerStream, MemStream,
+    BoxedImageStream, Cache, CacheError, CacheKey, CacheStream, ImageMetadata, InnerStream,
+    MemStream,
 };
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -86,7 +87,11 @@ impl<InternalCacheImpl: InternalMemoryCache> Cache for MemoryCache<InternalCache
             Some(mut mem_cache) => match mem_cache.get(key).map(|(bytes, metadata, _)| {
                 Ok((InnerStream::Memory(MemStream(bytes.clone())), *metadata))
             }) {
-                Some(v) => Some(v.map(|(inner, metadata)| todo!())),
+                Some(v) => Some(v.and_then(|(inner, metadata)| {
+                    CacheStream::new(inner, None)
+                        .map(|v| (v, metadata))
+                        .map_err(|_| CacheError::DecryptionFailure)
+                })),
                 None => self.inner.get(key).await,
             },
             None => self.inner.get(key).await,

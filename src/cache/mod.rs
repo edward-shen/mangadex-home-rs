@@ -10,13 +10,12 @@ use bytes::{Bytes, BytesMut};
 use chrono::{DateTime, FixedOffset};
 use fs::ConcurrentFsStream;
 use futures::{Stream, StreamExt};
-use once_cell::sync::Lazy;
+use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
-use sodiumoxide::crypto::secretstream::{gen_key, Header, Key, Pull, Stream as SecretStream};
+use sodiumoxide::crypto::secretstream::{Header, Key, Pull, Stream as SecretStream};
 use thiserror::Error;
-use tokio::fs::File;
-use tokio::io::BufReader;
+use tokio::io::AsyncRead;
 use tokio::sync::mpsc::Sender;
 use tokio_util::codec::{BytesCodec, FramedRead};
 
@@ -24,7 +23,7 @@ pub use disk::DiskCache;
 pub use fs::UpstreamError;
 pub use mem::MemoryCache;
 
-static ENCRYPTION_KEY: Lazy<Key> = Lazy::new(gen_key);
+pub static ENCRYPTION_KEY: OnceCell<Key> = OnceCell::new();
 
 mod disk;
 mod fs;
@@ -216,7 +215,7 @@ impl CacheStream {
         Ok(Self {
             inner,
             decrypt: header
-                .map(|header| SecretStream::init_pull(&header, &ENCRYPTION_KEY))
+                .map(|header| SecretStream::init_pull(&header, &ENCRYPTION_KEY.get().unwrap()))
                 .transpose()?,
         })
     }
@@ -248,7 +247,7 @@ impl Stream for CacheStream {
 pub(self) enum InnerStream {
     Concurrent(ConcurrentFsStream),
     Memory(MemStream),
-    Completed(FramedRead<BufReader<File>, BytesCodec>),
+    Completed(FramedRead<Pin<Box<dyn AsyncRead + Send>>, BytesCodec>),
 }
 
 impl From<CachedImage> for InnerStream {
