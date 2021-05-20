@@ -13,7 +13,7 @@ use lru::LruCache;
 use tokio::sync::mpsc::{channel, Sender};
 use tokio::sync::Mutex;
 
-type CacheValue = (Bytes, ImageMetadata, usize);
+type CacheValue = (Bytes, ImageMetadata, u64);
 
 /// Use LRU as the eviction strategy
 pub type Lru = LruCache<CacheKey, CacheValue>;
@@ -78,7 +78,7 @@ pub struct MemoryCache<InternalCacheImpl, InnerCache> {
     inner: InnerCache,
     cur_mem_size: AtomicU64,
     mem_cache: Mutex<InternalCacheImpl>,
-    master_sender: Sender<(CacheKey, Bytes, ImageMetadata, usize)>,
+    master_sender: Sender<(CacheKey, Bytes, ImageMetadata, u64)>,
 }
 
 impl<InternalCacheImpl: 'static + InternalMemoryCache, InnerCache: 'static + Cache>

@@ -203,7 +203,7 @@ pub trait CallbackCache: Cache {
         key: CacheKey,
         image: BoxedImageStream,
         metadata: ImageMetadata,
-        on_complete: Sender<(CacheKey, Bytes, ImageMetadata, usize)>,
+        on_complete: Sender<(CacheKey, Bytes, ImageMetadata, u64)>,
     ) -> Result<CacheStream, CacheError>;
 }
 
@@ -215,7 +215,7 @@ impl<T: CallbackCache> CallbackCache for Arc<T> {
         key: CacheKey,
         image: BoxedImageStream,
         metadata: ImageMetadata,
-        on_complete: Sender<(CacheKey, Bytes, ImageMetadata, usize)>,
+        on_complete: Sender<(CacheKey, Bytes, ImageMetadata, u64)>,
     ) -> Result<CacheStream, CacheError> {
         self.as_ref()
             .put_with_on_completed_callback(key, image, metadata, on_complete)

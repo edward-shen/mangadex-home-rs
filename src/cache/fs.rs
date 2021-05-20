@@ -15,11 +15,10 @@
 //! misses are treated as closer as a cache hit.
 
 use std::collections::HashMap;
-use std::convert::TryFrom;
 use std::error::Error;
 use std::fmt::Display;
 use std::io::SeekFrom;
-use std::num::NonZeroUsize;
+use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -27,7 +26,7 @@ use std::task::{Context, Poll};
 use actix_web::error::PayloadError;
 use bytes::{Buf, Bytes, BytesMut};
 use futures::{Future, Stream, StreamExt};
-use log::{debug, error, warn};
+use log::{debug, warn};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use sodiumoxide::crypto::secretstream::{
@@ -202,11 +201,11 @@ pub(super) async fn write_file<Fut, DbCallback>(
     mut byte_stream: BoxedImageStream,
     metadata: ImageMetadata,
     db_callback: DbCallback,
-    on_complete: Option<Sender<(CacheKey, Bytes, ImageMetadata, usize)>>,
+    on_complete: Option<Sender<(CacheKey, Bytes, ImageMetadata, u64)>>,
 ) -> Result<(InnerStream, Option<Header>), std::io::Error>
 where
     Fut: 'static + Send + Sync + Future<Output = ()>,
-    DbCallback: 'static + Send + Sync + FnOnce(u32) -> Fut,
+    DbCallback: 'static + Send + Sync + FnOnce(u64) -> Fut,
 {
     let (tx, rx) = channel(WritingStatus::NotDone);
 
@@ -237,7 +236,7 @@ where
     tokio::spawn(async move {
         let path_buf = path_buf; // moves path buf into async
         let mut errored = false;
-        let mut bytes_written: u32 = 0;
+        let mut bytes_written: u64 = 0;
         let mut acc_bytes = BytesMut::new();
         let accumulate = on_complete.is_some();
         writer.write_all(metadata_string.as_bytes()).await?;
@@ -254,20 +253,7 @@ where
                         0 => break,
                         n => {
                             bytes.advance(n);
-                            let n = if let Ok(n) = u32::try_from(n) {
-                                n
-                            } else {
-                                error!("Tried to advance larger than an u32?");
-                                errored = true;
-                                break;
-                            };
-                            let (new_size, overflowed) = bytes_written.overflowing_add(n);
-                            if overflowed {
-                                error!("File size was larger than u32! Aborting!");
-                                errored = true;
-                                break;
-                            }
-                            bytes_written = new_size;
+                            bytes_written += n as u64;
 
                             // We don't care if we don't have receivers
                             let _ = tx.send(WritingStatus::NotDone);
@@ -311,12 +297,7 @@ where
         if let Some(sender) = on_complete {
             tokio::spawn(async move {
                 sender
-                    .send((
-                        cache_key,
-                        acc_bytes.freeze(),
-                        metadata,
-                        bytes_written as usize,
-                    ))
+                    .send((cache_key, acc_bytes.freeze(), metadata, bytes_written))
                     .await
             });
         }
@@ -408,10 +389,10 @@ pub struct ConcurrentFsStream {
     /// this reader will never complete.
     receiver: Pin<Box<WatchStream<WritingStatus>>>,
     /// The number of bytes the reader has read
-    bytes_read: usize,
+    bytes_read: u64,
     /// The number of bytes that the writer has reported it has written. If the
     /// writer has not reported yet, this value is None.
-    bytes_total: Option<NonZeroUsize>,
+    bytes_total: Option<NonZeroU64>,
 }
 
 impl ConcurrentFsStream {
@@ -480,8 +461,7 @@ impl Stream for ConcurrentFsStream {
             if let Poll::Ready(Some(WritingStatus::Done(n))) =
                 self.receiver.as_mut().poll_next_unpin(cx)
             {
-                self.bytes_total =
-                    Some(NonZeroUsize::new(n as usize).expect("Stored a 0 byte image?"))
+                self.bytes_total = Some(NonZeroU64::new(n).expect("Stored a 0 byte image?"))
             }
 
             // Okay, now we know if we've read enough bytes or not. If the
@@ -504,7 +484,7 @@ impl Stream for ConcurrentFsStream {
             Poll::Ready(Some(Ok(Bytes::new())))
         } else {
             // We have data! Give it to the reader!
-            self.bytes_read += filled;
+            self.bytes_read += filled as u64;
             bytes.truncate(filled);
             Poll::Ready(Some(Ok(bytes.into())))
         }
@@ -521,7 +501,7 @@ impl From<UpstreamError> for actix_web::Error {
 #[derive(Debug, Clone, Copy)]
 enum WritingStatus {
     NotDone,
-    Done(u32),
+    Done(u64),
     Error,
 }
 

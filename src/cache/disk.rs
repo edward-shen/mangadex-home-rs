@@ -27,7 +27,7 @@ pub struct DiskCache {
 
 enum DbMessage {
     Get(Arc<PathBuf>),
-    Put(Arc<PathBuf>, u32),
+    Put(Arc<PathBuf>, u64),
 }
 
 impl DiskCache {
@@ -53,9 +53,21 @@ impl DiskCache {
             db
         };
 
+        // This is intentional.
+        #[allow(clippy::cast_sign_loss)]
+        let disk_cur_size = {
+            let mut conn = db_pool.acquire().await.unwrap();
+            sqlx::query!("SELECT IFNULL(SUM(size), 0) AS size FROM Images")
+                .fetch_one(&mut conn)
+                .await
+                .map(|record| record.size)
+                .unwrap_or_default()
+                .unwrap_or_default() as u64
+        };
+
         let new_self = Arc::new(Self {
             disk_path,
-            disk_cur_size: AtomicU64::new(0),
+            disk_cur_size: AtomicU64::new(disk_cur_size),
             db_update_channel_sender: db_tx,
         });
 
@@ -102,21 +114,24 @@ async fn db_listener(
                 }
                 DbMessage::Put(entry, size) => {
                     let key = entry.as_os_str().to_str();
-                    let query = sqlx::query!(
-                        "insert into Images (id, size, accessed) values (?, ?, ?) on conflict do nothing",
-                        key,
-                        size,
-                        now,
-                    )
-                    .execute(&mut transaction)
-                    .await;
-                    if let Err(e) = query {
-                        warn!("Failed to add {:?} to db: {}", key, e);
+                    {
+                        // This is intentional.
+                        #[allow(clippy::cast_possible_wrap)]
+                        let size = size as i64;
+                        let query = sqlx::query!(
+                            "insert into Images (id, size, accessed) values (?, ?, ?) on conflict do nothing",
+                            key,
+                            size,
+                            now,
+                        )
+                        .execute(&mut transaction)
+                        .await;
+                        if let Err(e) = query {
+                            warn!("Failed to add {:?} to db: {}", key, e);
+                        }
                     }
 
-                    cache
-                        .disk_cur_size
-                        .fetch_add(u64::from(size), Ordering::Release);
+                    cache.disk_cur_size.fetch_add(size, Ordering::Release);
                 }
             }
         }
@@ -205,7 +220,7 @@ impl Cache for DiskCache {
         let path = Arc::new(self.disk_path.clone().join(PathBuf::from(&key)));
         let path_0 = Arc::clone(&path);
 
-        let db_callback = |size: u32| async move {
+        let db_callback = |size: u64| async move {
             std::mem::drop(channel.send(DbMessage::Put(path_0, size)).await);
         };
 
@@ -225,14 +240,14 @@ impl CallbackCache for DiskCache {
         key: CacheKey,
         image: BoxedImageStream,
         metadata: ImageMetadata,
-        on_complete: Sender<(CacheKey, Bytes, ImageMetadata, usize)>,
+        on_complete: Sender<(CacheKey, Bytes, ImageMetadata, u64)>,
     ) -> Result<CacheStream, CacheError> {
         let channel = self.db_update_channel_sender.clone();
 
         let path = Arc::new(self.disk_path.clone().join(PathBuf::from(&key)));
         let path_0 = Arc::clone(&path);
 
-        let db_callback = |size: u32| async move {
+        let db_callback = |size: u64| async move {
             // We don't care about the result of the send
             std::mem::drop(channel.send(DbMessage::Put(path_0, size)).await);
         };
