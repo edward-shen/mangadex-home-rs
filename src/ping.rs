@@ -8,6 +8,7 @@ use rustls::sign::{RSASigningKey, SigningKey};
 use rustls::Certificate;
 use serde::de::{MapAccess, Visitor};
 use serde::{Deserialize, Serialize};
+use serde_repr::Deserialize_repr;
 use sodiumoxide::crypto::box_::PrecomputedKey;
 use url::Url;
 
@@ -64,7 +65,14 @@ impl<'a> From<(&'a str, &CliArgs)> for Request<'a> {
 }
 
 #[derive(Deserialize, Debug)]
-pub struct Response {
+#[serde(untagged)]
+pub enum Response {
+    Ok(OkResponse),
+    Error(ErrorResponse),
+}
+
+#[derive(Deserialize, Debug)]
+pub struct OkResponse {
     pub image_server: Url,
     pub latest_build: usize,
     pub url: Url,
@@ -74,6 +82,20 @@ pub struct Response {
     #[serde(default)]
     pub force_tokens: bool,
     pub tls: Option<Tls>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct ErrorResponse {
+    pub error: String,
+    pub status: ErrorCode,
+}
+
+#[derive(Deserialize_repr, Debug, Copy, Clone)]
+#[repr(u16)]
+pub enum ErrorCode {
+    MalformedJson = 400,
+    InvalidSecret = 401,
+    InvalidContentType = 415,
 }
 
 pub struct Tls {
@@ -150,7 +172,7 @@ pub async fn update_server_state(secret: &str, cli: &CliArgs, data: &mut Arc<RwL
     let resp = client.post(CONTROL_CENTER_PING_URL).json(&req).send().await;
     match resp {
         Ok(resp) => match resp.json::<Response>().await {
-            Ok(resp) => {
+            Ok(Response::Ok(resp)) => {
                 debug!("got write guard for server state");
                 let mut write_guard = data.0.write();
 
@@ -218,6 +240,12 @@ pub async fn update_server_state(secret: &str, cli: &CliArgs, data: &mut Arc<RwL
                 }
 
                 debug!("dropping write guard for server state");
+            }
+            Ok(Response::Error(resp)) => {
+                error!(
+                    "Got an {} error from upstream: {}",
+                    resp.status as u16, resp.error
+                );
             }
             Err(e) => warn!("Got malformed response: {}", e),
         },

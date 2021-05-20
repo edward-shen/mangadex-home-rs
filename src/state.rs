@@ -39,6 +39,8 @@ pub enum ServerInitError {
     KeyParseError(String),
     #[error("Token key was not provided in initial request")]
     MissingTokenKey,
+    #[error("Got error response from control center")]
+    ErrorResponse,
 }
 
 impl ServerState {
@@ -56,7 +58,7 @@ impl ServerState {
 
         match resp {
             Ok(resp) => match resp.json::<Response>().await {
-                Ok(mut resp) => {
+                Ok(Response::Ok(mut resp)) => {
                     let key = resp
                         .token_key
                         .ok_or(ServerInitError::MissingTokenKey)
@@ -117,6 +119,13 @@ impl ServerState {
                         url: resp.url,
                         url_overridden: config.override_upstream.is_some(),
                     })
+                }
+                Ok(Response::Error(resp)) => {
+                    error!(
+                        "Got an {} error from upstream: {}",
+                        resp.status as u16, resp.error
+                    );
+                    Err(ServerInitError::ErrorResponse)
                 }
                 Err(e) => {
                     error!("Got malformed response: {}. Is MangaDex@Home down?", e);
