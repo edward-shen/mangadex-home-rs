@@ -15,7 +15,9 @@ use tokio::fs::remove_file;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio_stream::wrappers::ReceiverStream;
 
-use super::{BoxedImageStream, Cache, CacheError, CacheKey, CacheStream, ImageMetadata};
+use super::{
+    BoxedImageStream, Cache, CacheError, CacheKey, CacheStream, CallbackCache, ImageMetadata,
+};
 
 pub struct DiskCache {
     disk_path: PathBuf,
@@ -112,7 +114,9 @@ async fn db_listener(
                         warn!("Failed to add {:?} to db: {}", key, e);
                     }
 
-                    cache.increase_usage(size);
+                    cache
+                        .disk_cur_size
+                        .fetch_add(u64::from(size), Ordering::Release);
                 }
             }
         }
@@ -124,7 +128,8 @@ async fn db_listener(
             );
         }
 
-        if cache.on_disk_size() >= max_on_disk_size {
+        let on_disk_size = (cache.disk_cur_size.load(Ordering::Acquire) + 4095) / 4096 * 4096;
+        if on_disk_size >= max_on_disk_size {
             let mut conn = match db_pool.acquire().await {
                 Ok(conn) => conn,
                 Err(e) => {
@@ -163,7 +168,7 @@ async fn db_listener(
                 tokio::spawn(remove_file(item.id));
             }
 
-            cache.decrease_usage(size_freed);
+            cache.disk_cur_size.fetch_sub(size_freed, Ordering::Release);
         }
     }
 }
@@ -211,28 +216,10 @@ impl Cache for DiskCache {
                 CacheStream::new(inner, maybe_header).map_err(|_| CacheError::DecryptionFailure)
             })
     }
+}
 
-    #[inline]
-    fn increase_usage(&self, amt: u32) {
-        self.disk_cur_size
-            .fetch_add(u64::from(amt), Ordering::Release);
-    }
-
-    #[inline]
-    fn decrease_usage(&self, amt: u64) {
-        self.disk_cur_size.fetch_sub(amt, Ordering::Release);
-    }
-
-    #[inline]
-    fn on_disk_size(&self) -> u64 {
-        (self.disk_cur_size.load(Ordering::Acquire) + 4095) / 4096 * 4096
-    }
-
-    #[inline]
-    fn mem_size(&self) -> u64 {
-        0
-    }
-
+#[async_trait]
+impl CallbackCache for DiskCache {
     async fn put_with_on_completed_callback(
         &self,
         key: CacheKey,
@@ -256,15 +243,5 @@ impl Cache for DiskCache {
             .and_then(|(inner, maybe_header)| {
                 CacheStream::new(inner, maybe_header).map_err(|_| CacheError::DecryptionFailure)
             })
-    }
-
-    #[inline]
-    async fn put_internal(&self, _: CacheKey, _: Bytes, _: ImageMetadata, _: usize) {
-        unimplemented!()
-    }
-
-    #[inline]
-    async fn pop_memory(&self) -> Option<(CacheKey, Bytes, ImageMetadata, usize)> {
-        None
     }
 }

@@ -2,8 +2,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use super::{
-    BoxedImageStream, Cache, CacheError, CacheKey, CacheStream, ImageMetadata, InnerStream,
-    MemStream,
+    BoxedImageStream, Cache, CacheError, CacheKey, CacheStream, CallbackCache, ImageMetadata,
+    InnerStream, MemStream,
 };
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -98,14 +98,28 @@ impl<InternalCacheImpl: 'static + InternalMemoryCache, InnerCache: 'static + Cac
             let new_self = new_self_0;
             let max_mem_size = max_mem_size / 20 * 19;
             while let Some((key, bytes, metadata, size)) = rx.recv().await {
-                new_self.inner.increase_usage(size as u32);
+                // Add to memory cache
                 new_self
-                    .inner
-                    .put_internal(key, bytes, metadata, size)
-                    .await;
-                while new_self.mem_size() >= max_mem_size {
-                    if let Some((_, _, _, size)) = new_self.pop_memory().await {
-                        new_self.decrease_usage(size as u64);
+                    .cur_mem_size
+                    .fetch_add(size as u64, Ordering::Release);
+                new_self
+                    .mem_cache
+                    .lock()
+                    .await
+                    .push(key, (bytes, metadata, size));
+
+                // Pop if too large
+                while new_self.cur_mem_size.load(Ordering::Acquire) >= max_mem_size {
+                    let popped = new_self
+                        .mem_cache
+                        .lock()
+                        .await
+                        .pop()
+                        .map(|(key, (bytes, metadata, size))| (key, bytes, metadata, size));
+                    if let Some((_, _, _, size)) = popped {
+                        new_self
+                            .cur_mem_size
+                            .fetch_sub(size as u64, Ordering::Release);
                     } else {
                         break;
                     }
@@ -118,8 +132,10 @@ impl<InternalCacheImpl: 'static + InternalMemoryCache, InnerCache: 'static + Cac
 }
 
 #[async_trait]
-impl<InternalCacheImpl: InternalMemoryCache, InnerCache: Cache> Cache
-    for MemoryCache<InternalCacheImpl, InnerCache>
+impl<InternalCacheImpl, InnerCache> Cache for MemoryCache<InternalCacheImpl, InnerCache>
+where
+    InternalCacheImpl: InternalMemoryCache,
+    InnerCache: CallbackCache,
 {
     #[inline]
     async fn get(
@@ -151,62 +167,5 @@ impl<InternalCacheImpl: InternalMemoryCache, InnerCache: Cache> Cache
         self.inner
             .put_with_on_completed_callback(key, image, metadata, self.master_sender.clone())
             .await
-    }
-
-    #[inline]
-    fn increase_usage(&self, amt: u32) {
-        self.cur_mem_size
-            .fetch_add(u64::from(amt), Ordering::Release);
-    }
-
-    #[inline]
-    fn decrease_usage(&self, amt: u64) {
-        self.cur_mem_size.fetch_sub(amt, Ordering::Release);
-    }
-
-    #[inline]
-    fn on_disk_size(&self) -> u64 {
-        self.inner.on_disk_size()
-    }
-
-    #[inline]
-    fn mem_size(&self) -> u64 {
-        self.cur_mem_size.load(Ordering::Acquire)
-    }
-
-    #[inline]
-    async fn put_with_on_completed_callback(
-        &self,
-        key: CacheKey,
-        image: BoxedImageStream,
-        metadata: ImageMetadata,
-        on_complete: Sender<(CacheKey, Bytes, ImageMetadata, usize)>,
-    ) -> Result<CacheStream, super::CacheError> {
-        self.inner
-            .put_with_on_completed_callback(key, image, metadata, on_complete)
-            .await
-    }
-
-    #[inline]
-    async fn put_internal(
-        &self,
-        key: CacheKey,
-        image: Bytes,
-        metadata: ImageMetadata,
-        size: usize,
-    ) {
-        self.mem_cache
-            .lock()
-            .await
-            .push(key, (image, metadata, size));
-    }
-
-    #[inline]
-    async fn pop_memory(&self) -> Option<(CacheKey, Bytes, ImageMetadata, usize)> {
-        self.mem_cache
-            .lock()
-            .await
-            .pop()
-            .map(|(key, (bytes, metadata, size))| (key, bytes, metadata, size))
     }
 }

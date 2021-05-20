@@ -236,7 +236,7 @@ where
     tokio::spawn(async move {
         let path_buf = path_buf; // moves path buf into async
         let mut errored = false;
-        let mut bytes_written: u32 = 0;
+        let mut bytes_written = 0;
         let mut acc_bytes = BytesMut::new();
         let accumulate = on_complete.is_some();
         writer.write_all(metadata_string.as_bytes()).await?;

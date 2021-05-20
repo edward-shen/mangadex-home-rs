@@ -172,37 +172,6 @@ pub trait Cache: Send + Sync {
         image: BoxedImageStream,
         metadata: ImageMetadata,
     ) -> Result<CacheStream, CacheError>;
-
-    /// Increases the size of the cache. This is a double-dispatch method, so
-    /// see specific implementations for complete detail. This only accepts a
-    /// u32 as all files should be smaller than a u32 and some cache
-    /// implementations can only handle up to a u32.
-    fn increase_usage(&self, amt: u32);
-
-    /// Decreases the size of the cache. This is a double-dispatch method, so
-    /// see specific implementations for complete detail.
-    fn decrease_usage(&self, amt: u64);
-
-    /// Reports the on-disk size of the cache.
-    fn on_disk_size(&self) -> u64;
-
-    /// Reports the memory size of the cache.
-    fn mem_size(&self) -> u64;
-
-    async fn put_with_on_completed_callback(
-        &self,
-        key: CacheKey,
-        image: BoxedImageStream,
-        metadata: ImageMetadata,
-        on_complete: Sender<(CacheKey, Bytes, ImageMetadata, usize)>,
-    ) -> Result<CacheStream, CacheError>;
-
-    /// Double-dispatch method. Used by cache implementations that require a
-    /// completed entry to put items into their cache.
-    async fn put_internal(&self, key: CacheKey, image: Bytes, metadata: ImageMetadata, size: usize);
-
-    /// Pops an entry from the memory cache, if one exists.
-    async fn pop_memory(&self) -> Option<(CacheKey, Bytes, ImageMetadata, usize)>;
 }
 
 #[async_trait]
@@ -224,27 +193,21 @@ impl<T: Cache> Cache for std::sync::Arc<T> {
     ) -> Result<CacheStream, CacheError> {
         self.as_ref().put(key, image, metadata).await
     }
+}
 
-    #[inline]
-    fn increase_usage(&self, amt: u32) {
-        self.as_ref().increase_usage(amt)
-    }
+#[async_trait]
+pub trait CallbackCache: Cache {
+    async fn put_with_on_completed_callback(
+        &self,
+        key: CacheKey,
+        image: BoxedImageStream,
+        metadata: ImageMetadata,
+        on_complete: Sender<(CacheKey, Bytes, ImageMetadata, usize)>,
+    ) -> Result<CacheStream, CacheError>;
+}
 
-    #[inline]
-    fn decrease_usage(&self, amt: u64) {
-        self.as_ref().decrease_usage(amt)
-    }
-
-    #[inline]
-    fn on_disk_size(&self) -> u64 {
-        self.as_ref().on_disk_size()
-    }
-
-    #[inline]
-    fn mem_size(&self) -> u64 {
-        self.as_ref().mem_size()
-    }
-
+#[async_trait]
+impl<T: CallbackCache> CallbackCache for std::sync::Arc<T> {
     #[inline]
     async fn put_with_on_completed_callback(
         &self,
@@ -256,22 +219,6 @@ impl<T: Cache> Cache for std::sync::Arc<T> {
         self.as_ref()
             .put_with_on_completed_callback(key, image, metadata, on_complete)
             .await
-    }
-
-    #[inline]
-    async fn put_internal(
-        &self,
-        key: CacheKey,
-        image: Bytes,
-        metadata: ImageMetadata,
-        size: usize,
-    ) {
-        self.as_ref().put_internal(key, image, metadata, size).await
-    }
-
-    #[inline]
-    async fn pop_memory(&self) -> Option<(CacheKey, Bytes, ImageMetadata, usize)> {
-        self.as_ref().pop_memory().await
     }
 }
 

@@ -55,7 +55,7 @@ impl Responder for ServerResponse {
 #[get("/{token}/data/{chapter_hash}/{file_name}")]
 async fn token_data(
     state: Data<RwLockServerState>,
-    cache: Data<Box<dyn Cache>>,
+    cache: Data<dyn Cache>,
     path: Path<(String, String, String)>,
 ) -> impl Responder {
     let (token, chapter_hash, file_name) = path.into_inner();
@@ -71,7 +71,7 @@ async fn token_data(
 #[get("/{token}/data-saver/{chapter_hash}/{file_name}")]
 async fn token_data_saver(
     state: Data<RwLockServerState>,
-    cache: Data<Box<dyn Cache>>,
+    cache: Data<dyn Cache>,
     path: Path<(String, String, String)>,
 ) -> impl Responder {
     let (token, chapter_hash, file_name) = path.into_inner();
@@ -189,7 +189,7 @@ fn push_headers(builder: &mut HttpResponseBuilder) -> &mut HttpResponseBuilder {
 #[allow(clippy::future_not_send)]
 async fn fetch_image(
     state: Data<RwLockServerState>,
-    cache: Data<Box<dyn Cache>>,
+    cache: Data<dyn Cache>,
     chapter_hash: String,
     file_name: String,
     is_data_saver: bool,
