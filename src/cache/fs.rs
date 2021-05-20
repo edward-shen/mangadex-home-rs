@@ -14,6 +14,15 @@
 //! upstream no longer needs to process duplicate requests and sequential cache
 //! misses are treated as closer as a cache hit.
 
+use std::collections::HashMap;
+use std::error::Error;
+use std::fmt::Display;
+use std::io::SeekFrom;
+use std::num::NonZeroU32;
+use std::path::{Path, PathBuf};
+use std::pin::Pin;
+use std::task::{Context, Poll};
+
 use actix_web::error::PayloadError;
 use bytes::{Buf, Bytes, BytesMut};
 use futures::{Future, Stream, StreamExt};
@@ -23,14 +32,6 @@ use serde::{Deserialize, Serialize};
 use sodiumoxide::crypto::secretstream::{
     Header, Pull, Push, Stream as SecretStream, Tag, HEADERBYTES,
 };
-use std::collections::HashMap;
-use std::error::Error;
-use std::fmt::Display;
-use std::io::SeekFrom;
-use std::num::NonZeroU32;
-use std::path::{Path, PathBuf};
-use std::pin::Pin;
-use std::task::{Context, Poll};
 use tokio::fs::{create_dir_all, remove_file, File};
 use tokio::io::{
     AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, BufReader,
@@ -184,7 +185,7 @@ impl AsyncRead for EncryptedDiskReader {
         for (old, new) in buffer[cursor_start..].iter_mut().zip(&new_self.buf) {
             *old = *new;
         }
-        buf.set_filled(cursor_start + &new_self.buf.len());
+        buf.set_filled(cursor_start + new_self.buf.len());
 
         res
     }
@@ -344,11 +345,11 @@ impl AsyncWrite for EncryptedDiskWriter {
         let new_self = Pin::into_inner(self);
         {
             let encryption_buffer = &mut new_self.encryption_buffer;
-            new_self.stream.as_mut().map(|stream| {
+            if let Some(stream) = new_self.stream.as_mut() {
                 stream
                     .push_to_vec(buf, None, Tag::Message, encryption_buffer)
                     .expect("Failed to write encrypted data to buffer");
-            });
+            }
         }
 
         new_self.write_buffer.extend(&new_self.encryption_buffer);

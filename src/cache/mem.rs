@@ -1,8 +1,5 @@
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-
-use crate::cache::DiskCache;
 
 use super::{
     BoxedImageStream, Cache, CacheError, CacheKey, CacheStream, ImageMetadata, InnerStream,
@@ -31,37 +28,81 @@ pub trait InternalMemoryCache: Sync + Send {
     fn pop(&mut self) -> Option<(CacheKey, CacheValue)>;
 }
 
+impl InternalMemoryCache for Lfu {
+    #[inline]
+    fn unbounded() -> Self {
+        Self::unbounded()
+    }
+
+    #[inline]
+    fn get(&mut self, key: &CacheKey) -> Option<&CacheValue> {
+        self.get(key)
+    }
+
+    #[inline]
+    fn push(&mut self, key: CacheKey, data: CacheValue) {
+        self.insert(key, data);
+    }
+
+    #[inline]
+    fn pop(&mut self) -> Option<(CacheKey, CacheValue)> {
+        self.pop_lfu_key_value()
+    }
+}
+
+impl InternalMemoryCache for Lru {
+    #[inline]
+    fn unbounded() -> Self {
+        Self::unbounded()
+    }
+
+    #[inline]
+    fn get(&mut self, key: &CacheKey) -> Option<&CacheValue> {
+        self.get(key)
+    }
+
+    #[inline]
+    fn push(&mut self, key: CacheKey, data: CacheValue) {
+        self.put(key, data);
+    }
+
+    #[inline]
+    fn pop(&mut self) -> Option<(CacheKey, CacheValue)> {
+        self.pop_lru()
+    }
+}
+
 /// Memory accelerated disk cache. Uses the internal cache implementation in
 /// memory to speed up reads.
-pub struct MemoryCache<InternalCacheImpl> {
-    inner: Arc<Box<dyn Cache>>,
+pub struct MemoryCache<InternalCacheImpl, InnerCache> {
+    inner: InnerCache,
     cur_mem_size: AtomicU64,
     mem_cache: Mutex<InternalCacheImpl>,
     master_sender: Sender<(CacheKey, Bytes, ImageMetadata, usize)>,
 }
 
-impl<InternalCacheImpl: 'static + InternalMemoryCache> MemoryCache<InternalCacheImpl> {
-    #[allow(clippy::new_ret_no_self)]
-    pub async fn new(
-        disk_max_size: u64,
-        disk_path: PathBuf,
-        max_mem_size: u64,
-    ) -> Arc<Box<dyn Cache>> {
+impl<InternalCacheImpl: 'static + InternalMemoryCache, InnerCache: 'static + Cache>
+    MemoryCache<InternalCacheImpl, InnerCache>
+{
+    pub async fn new(inner: InnerCache, max_mem_size: u64) -> Arc<Self> {
         let (tx, mut rx) = channel(100);
-        let new_self = Arc::new(Box::new(Self {
-            inner: DiskCache::new(disk_max_size, disk_path).await,
+        let new_self = Arc::new(Self {
+            inner,
             cur_mem_size: AtomicU64::new(0),
             mem_cache: Mutex::new(InternalCacheImpl::unbounded()),
             master_sender: tx,
-        }) as Box<dyn Cache>);
+        });
 
         let new_self_0 = Arc::clone(&new_self);
         tokio::spawn(async move {
             let new_self = new_self_0;
             let max_mem_size = max_mem_size / 20 * 19;
             while let Some((key, bytes, metadata, size)) = rx.recv().await {
-                new_self.increase_usage(size as u32);
-                new_self.put_internal(key, bytes, metadata, size).await;
+                new_self.inner.increase_usage(size as u32);
+                new_self
+                    .inner
+                    .put_internal(key, bytes, metadata, size)
+                    .await;
                 while new_self.mem_size() >= max_mem_size {
                     if let Some((_, _, _, size)) = new_self.pop_memory().await {
                         new_self.decrease_usage(size as u64);
@@ -77,7 +118,9 @@ impl<InternalCacheImpl: 'static + InternalMemoryCache> MemoryCache<InternalCache
 }
 
 #[async_trait]
-impl<InternalCacheImpl: InternalMemoryCache> Cache for MemoryCache<InternalCacheImpl> {
+impl<InternalCacheImpl: InternalMemoryCache, InnerCache: Cache> Cache
+    for MemoryCache<InternalCacheImpl, InnerCache>
+{
     #[inline]
     async fn get(
         &self,
@@ -165,49 +208,5 @@ impl<InternalCacheImpl: InternalMemoryCache> Cache for MemoryCache<InternalCache
             .await
             .pop()
             .map(|(key, (bytes, metadata, size))| (key, bytes, metadata, size))
-    }
-}
-
-impl InternalMemoryCache for Lfu {
-    #[inline]
-    fn unbounded() -> Self {
-        Self::unbounded()
-    }
-
-    #[inline]
-    fn get(&mut self, key: &CacheKey) -> Option<&CacheValue> {
-        self.get(key)
-    }
-
-    #[inline]
-    fn push(&mut self, key: CacheKey, data: CacheValue) {
-        self.insert(key, data);
-    }
-
-    #[inline]
-    fn pop(&mut self) -> Option<(CacheKey, CacheValue)> {
-        self.pop_lfu_key_value()
-    }
-}
-
-impl InternalMemoryCache for Lru {
-    #[inline]
-    fn unbounded() -> Self {
-        Self::unbounded()
-    }
-
-    #[inline]
-    fn get(&mut self, key: &CacheKey) -> Option<&CacheValue> {
-        self.get(key)
-    }
-
-    #[inline]
-    fn push(&mut self, key: CacheKey, data: CacheValue) {
-        self.put(key, data);
-    }
-
-    #[inline]
-    fn pop(&mut self) -> Option<(CacheKey, CacheValue)> {
-        self.pop_lru()
     }
 }

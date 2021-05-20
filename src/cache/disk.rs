@@ -29,11 +29,10 @@ enum DbMessage {
 }
 
 impl DiskCache {
-    /// Constructs a new low memory cache at the provided path and capaci ty.
+    /// Constructs a new low memory cache at the provided path and capacity.
     /// This internally spawns a task that will wait for filesystem
     /// notifications when a file has been written.
-    #[allow(clippy::new_ret_no_self)]
-    pub async fn new(disk_max_size: u64, disk_path: PathBuf) -> Arc<Box<dyn Cache>> {
+    pub async fn new(disk_max_size: u64, disk_path: PathBuf) -> Arc<Self> {
         let (db_tx, db_rx) = channel(128);
         let db_pool = {
             let db_url = format!("sqlite:{}/metadata.sqlite", disk_path.to_string_lossy());
@@ -52,11 +51,11 @@ impl DiskCache {
             db
         };
 
-        let new_self: Arc<Box<dyn Cache>> = Arc::new(Box::new(Self {
+        let new_self = Arc::new(Self {
             disk_path,
             disk_cur_size: AtomicU64::new(0),
             db_update_channel_sender: db_tx,
-        }));
+        });
 
         tokio::spawn(db_listener(
             Arc::clone(&new_self),
@@ -72,7 +71,7 @@ impl DiskCache {
 /// Spawn a new task that will listen for updates to the db, pruning if the size
 /// becomes too large.
 async fn db_listener(
-    cache: Arc<Box<dyn Cache>>,
+    cache: Arc<DiskCache>,
     db_rx: Receiver<DbMessage>,
     db_pool: SqlitePool,
     max_on_disk_size: u64,
@@ -202,7 +201,7 @@ impl Cache for DiskCache {
         let path_0 = Arc::clone(&path);
 
         let db_callback = |size: u32| async move {
-            let _ = channel.send(DbMessage::Put(path_0, size)).await;
+            std::mem::drop(channel.send(DbMessage::Put(path_0, size)).await);
         };
 
         super::fs::write_file(&path, key, image, metadata, db_callback, None)

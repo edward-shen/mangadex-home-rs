@@ -205,6 +205,76 @@ pub trait Cache: Send + Sync {
     async fn pop_memory(&self) -> Option<(CacheKey, Bytes, ImageMetadata, usize)>;
 }
 
+#[async_trait]
+impl<T: Cache> Cache for std::sync::Arc<T> {
+    #[inline]
+    async fn get(
+        &self,
+        key: &CacheKey,
+    ) -> Option<Result<(CacheStream, ImageMetadata), CacheError>> {
+        self.as_ref().get(key).await
+    }
+
+    #[inline]
+    async fn put(
+        &self,
+        key: CacheKey,
+        image: BoxedImageStream,
+        metadata: ImageMetadata,
+    ) -> Result<CacheStream, CacheError> {
+        self.as_ref().put(key, image, metadata).await
+    }
+
+    #[inline]
+    fn increase_usage(&self, amt: u32) {
+        self.as_ref().increase_usage(amt)
+    }
+
+    #[inline]
+    fn decrease_usage(&self, amt: u64) {
+        self.as_ref().decrease_usage(amt)
+    }
+
+    #[inline]
+    fn on_disk_size(&self) -> u64 {
+        self.as_ref().on_disk_size()
+    }
+
+    #[inline]
+    fn mem_size(&self) -> u64 {
+        self.as_ref().mem_size()
+    }
+
+    #[inline]
+    async fn put_with_on_completed_callback(
+        &self,
+        key: CacheKey,
+        image: BoxedImageStream,
+        metadata: ImageMetadata,
+        on_complete: Sender<(CacheKey, Bytes, ImageMetadata, usize)>,
+    ) -> Result<CacheStream, CacheError> {
+        self.as_ref()
+            .put_with_on_completed_callback(key, image, metadata, on_complete)
+            .await
+    }
+
+    #[inline]
+    async fn put_internal(
+        &self,
+        key: CacheKey,
+        image: Bytes,
+        metadata: ImageMetadata,
+        size: usize,
+    ) {
+        self.as_ref().put_internal(key, image, metadata, size).await
+    }
+
+    #[inline]
+    async fn pop_memory(&self) -> Option<(CacheKey, Bytes, ImageMetadata, usize)> {
+        self.as_ref().pop_memory().await
+    }
+}
+
 pub struct CacheStream {
     inner: InnerStream,
     decrypt: Option<SecretStream<Pull>>,
@@ -215,7 +285,7 @@ impl CacheStream {
         Ok(Self {
             inner,
             decrypt: header
-                .map(|header| SecretStream::init_pull(&header, &ENCRYPTION_KEY.get().unwrap()))
+                .map(|header| SecretStream::init_pull(&header, ENCRYPTION_KEY.get().unwrap()))
                 .transpose()?,
         })
     }

@@ -27,7 +27,8 @@ use state::{RwLockServerState, ServerState};
 use stop::send_stop;
 use thiserror::Error;
 
-use crate::cache::{mem, MemoryCache, ENCRYPTION_KEY};
+use crate::cache::mem::{Lfu, Lru};
+use crate::cache::{MemoryCache, ENCRYPTION_KEY};
 use crate::config::UnstableOptions;
 use crate::state::DynamicServerCert;
 
@@ -145,12 +146,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
     });
 
-    let cache: Arc<Box<dyn Cache>> = if low_mem_mode {
-        DiskCache::new(disk_quota, cache_path.clone()).await
+    let cache = DiskCache::new(disk_quota, cache_path.clone()).await;
+    let cache: Arc<dyn Cache> = if low_mem_mode {
+        cache
     } else if use_lfu {
-        MemoryCache::<mem::Lfu>::new(disk_quota, cache_path.clone(), memory_max_size).await
+        MemoryCache::<Lfu, _>::new(cache, memory_max_size).await
     } else {
-        MemoryCache::<mem::Lru>::new(disk_quota, cache_path.clone(), memory_max_size).await
+        MemoryCache::<Lru, _>::new(cache, memory_max_size).await
     };
 
     let cache_0 = Arc::clone(&cache);
