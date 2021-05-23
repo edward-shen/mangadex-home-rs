@@ -233,7 +233,7 @@ impl CacheStream {
         Ok(Self {
             inner,
             decrypt: header
-                .map(|header| SecretStream::init_pull(&header, ENCRYPTION_KEY.get().unwrap()))
+                .and_then(|header| ENCRYPTION_KEY.get().map(|key| SecretStream::init_pull(&header, key)))
                 .transpose()?,
         })
     }
