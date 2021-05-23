@@ -34,6 +34,7 @@ use crate::state::DynamicServerCert;
 
 mod cache;
 mod config;
+mod metrics;
 mod ping;
 mod routes;
 mod state;
@@ -102,6 +103,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         ENCRYPTION_KEY.set(gen_key()).unwrap();
     }
 
+    // HTTP Server init
+
     let server = ServerState::init(&client_secret, &cli_args).await?;
     let data_0 = Arc::new(RwLockServerState(RwLock::new(server)));
     let data_1 = Arc::clone(&data_0);
@@ -161,6 +164,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     HttpServer::new(move || {
         App::new()
             .service(routes::token_data)
+            .service(routes::metrics)
             .service(routes::token_data_saver)
             .route("{tail:.*}", web::get().to(routes::default))
             .app_data(Data::from(Arc::clone(&data_1)))

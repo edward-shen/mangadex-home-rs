@@ -13,6 +13,7 @@ use chrono::{DateTime, Utc};
 use futures::{Stream, TryStreamExt};
 use log::{debug, error, info, warn};
 use once_cell::sync::Lazy;
+use prometheus::{Encoder, TextEncoder};
 use reqwest::{Client, StatusCode};
 use serde::Deserialize;
 use sodiumoxide::crypto::box_::{open_precomputed, Nonce, PrecomputedKey, NONCEBYTES};
@@ -21,6 +22,10 @@ use thiserror::Error;
 use crate::cache::{Cache, CacheKey, ImageMetadata, UpstreamError};
 use crate::client_api_version;
 use crate::config::{SEND_SERVER_VERSION, VALIDATE_TOKENS};
+use crate::metrics::{
+    CACHE_HIT_COUNTER, CACHE_MISS_COUNTER, REQUESTS_DATA_COUNTER, REQUESTS_DATA_SAVER_COUNTER,
+    REQUESTS_OTHER_COUNTER, REQUESTS_TOTAL_COUNTER,
+};
 use crate::state::RwLockServerState;
 
 pub const BASE64_CONFIG: base64::Config = base64::Config::new(base64::CharacterSet::UrlSafe, false);
@@ -46,7 +51,10 @@ impl Responder for ServerResponse {
     fn respond_to(self, req: &HttpRequest) -> HttpResponse {
         match self {
             Self::TokenValidationError(e) => e.respond_to(req),
-            Self::HttpResponse(resp) => resp.respond_to(req),
+            Self::HttpResponse(resp) => {
+                REQUESTS_TOTAL_COUNTER.inc();
+                resp.respond_to(req)
+            }
         }
     }
 }
@@ -58,6 +66,7 @@ async fn token_data(
     cache: Data<dyn Cache>,
     path: Path<(String, String, String)>,
 ) -> impl Responder {
+    REQUESTS_DATA_COUNTER.inc();
     let (token, chapter_hash, file_name) = path.into_inner();
     if VALIDATE_TOKENS.load(Ordering::Acquire) {
         if let Err(e) = validate_token(&state.0.read().precomputed_key, token, &chapter_hash) {
@@ -74,6 +83,7 @@ async fn token_data_saver(
     cache: Data<dyn Cache>,
     path: Path<(String, String, String)>,
 ) -> impl Responder {
+    REQUESTS_DATA_SAVER_COUNTER.inc();
     let (token, chapter_hash, file_name) = path.into_inner();
     if VALIDATE_TOKENS.load(Ordering::Acquire) {
         if let Err(e) = validate_token(&state.0.read().precomputed_key, token, &chapter_hash) {
@@ -86,6 +96,7 @@ async fn token_data_saver(
 
 #[allow(clippy::future_not_send)]
 pub async fn default(state: Data<RwLockServerState>, req: HttpRequest) -> impl Responder {
+    REQUESTS_OTHER_COUNTER.inc();
     let path = &format!(
         "{}{}",
         state.0.read().image_server,
@@ -107,6 +118,17 @@ pub async fn default(state: Data<RwLockServerState>, req: HttpRequest) -> impl R
     push_headers(&mut resp_builder);
 
     ServerResponse::HttpResponse(resp_builder.body(resp.bytes().await.unwrap_or_default()))
+}
+
+#[allow(clippy::future_not_send)]
+#[get("/metrics")]
+pub async fn metrics() -> impl Responder {
+    let metric_families = prometheus::gather();
+    let mut buffer = Vec::new();
+    TextEncoder::new()
+        .encode(&metric_families, &mut buffer)
+        .unwrap();
+    String::from_utf8(buffer).unwrap()
 }
 
 #[derive(Error, Debug)]
@@ -198,6 +220,7 @@ async fn fetch_image(
 
     match cache.get(&key).await {
         Some(Ok((image, metadata))) => {
+            CACHE_HIT_COUNTER.inc();
             return construct_response(image, &metadata);
         }
         Some(Err(_)) => {
@@ -205,6 +228,8 @@ async fn fetch_image(
         }
         _ => (),
     }
+
+    CACHE_MISS_COUNTER.inc();
 
     // It's important to not get a write lock before this request, else we're
     // holding the read lock until the await resolves.
