@@ -1,47 +1,56 @@
 use once_cell::sync::Lazy;
 use prometheus::{register_int_counter, IntCounter};
 
-pub static CACHE_HIT_COUNTER: Lazy<IntCounter> =
-    Lazy::new(|| register_int_counter!("cache_hit", "The number of cache hits").unwrap());
+macro_rules! init_counters {
+    ($(($counter:ident, $ty:ty, $name:literal, $desc:literal),)*) => {
+        $(
+            pub static $counter: Lazy<$ty> = Lazy::new(|| {
+                register_int_counter!($name, $desc).unwrap()
+            });
+        )*
 
-pub static CACHE_MISS_COUNTER: Lazy<IntCounter> =
-    Lazy::new(|| register_int_counter!("cache_miss", "The number of cache misses").unwrap());
+        #[allow(clippy::shadow_unrelated)]
+        pub fn init() {
+            $(let _a = $counter.get();)*
+        }
+    };
+}
 
-pub static REQUESTS_TOTAL_COUNTER: Lazy<IntCounter> = Lazy::new(|| {
-    register_int_counter!("requests_total", "The total number of requests served.").unwrap()
-});
-
-pub static REQUESTS_DATA_COUNTER: Lazy<IntCounter> = Lazy::new(|| {
-    register_int_counter!(
+init_counters!(
+    (
+        CACHE_HIT_COUNTER,
+        IntCounter,
+        "cache_hit",
+        "The number of cache hits."
+    ),
+    (
+        CACHE_MISS_COUNTER,
+        IntCounter,
+        "cache_miss",
+        "The number of cache misses."
+    ),
+    (
+        REQUESTS_TOTAL_COUNTER,
+        IntCounter,
+        "requests_total",
+        "The total number of requests served."
+    ),
+    (
+        REQUESTS_DATA_COUNTER,
+        IntCounter,
         "requests_data",
         "The number of requests served from the /data endpoint."
-    )
-    .unwrap()
-});
-
-pub static REQUESTS_DATA_SAVER_COUNTER: Lazy<IntCounter> = Lazy::new(|| {
-    register_int_counter!(
+    ),
+    (
+        REQUESTS_DATA_SAVER_COUNTER,
+        IntCounter,
         "requests_data_saver",
         "The number of requests served from the /data-saver endpoint."
-    )
-    .unwrap()
-});
-
-pub static REQUESTS_OTHER_COUNTER: Lazy<IntCounter> = Lazy::new(|| {
-    register_int_counter!(
+    ),
+    (
+        REQUESTS_OTHER_COUNTER,
+        IntCounter,
         "requests_other",
         "The total number of request not served by primary endpoints."
-    )
-    .unwrap()
-});
-
-#[allow(clippy::shadow_unrelated)]
-pub fn init() {
-    // we just need to initialize these, getting the values registers them.
-    let _a = CACHE_HIT_COUNTER.get();
-    let _a = CACHE_MISS_COUNTER.get();
-    let _a = REQUESTS_TOTAL_COUNTER.get();
-    let _a = REQUESTS_DATA_COUNTER.get();
-    let _a = REQUESTS_DATA_SAVER_COUNTER.get();
-    let _a = REQUESTS_OTHER_COUNTER.get();
-}
+    ),
+);
