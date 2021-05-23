@@ -174,6 +174,7 @@ async fn db_listener(
             };
 
             let mut size_freed = 0;
+            #[allow(clippy::cast_sign_loss)]
             for item in items {
                 size_freed += item.size as u64;
                 tokio::spawn(remove_file(item.id));

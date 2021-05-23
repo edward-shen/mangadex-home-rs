@@ -109,9 +109,9 @@ pub async fn default(state: Data<RwLockServerState>, req: HttpRequest) -> impl R
         return ServerResponse::HttpResponse(
             ErrorNotFound("Path is not valid in offline mode").into(),
         );
-    } else {
-        info!("Got unknown path, just proxying: {}", path);
     }
+
+    info!("Got unknown path, just proxying: {}", path);
 
     let resp = match HTTP_CLIENT.get(path).send().await {
         Ok(resp) => resp,

@@ -35,7 +35,9 @@ pub static REQUESTS_OTHER_COUNTER: Lazy<IntCounter> = Lazy::new(|| {
     .unwrap()
 });
 
+#[allow(clippy::shadow_unrelated)]
 pub fn init() {
+    // we just need to initialize these, getting the values registers them.
     let _a = CACHE_HIT_COUNTER.get();
     let _a = CACHE_MISS_COUNTER.get();
     let _a = REQUESTS_TOTAL_COUNTER.get();
