@@ -13,6 +13,8 @@ pub static VALIDATE_TOKENS: AtomicBool = AtomicBool::new(false);
 // everywhere.
 pub static SEND_SERVER_VERSION: AtomicBool = AtomicBool::new(false);
 
+pub static OFFLINE_MODE: AtomicBool = AtomicBool::new(false);
+
 #[derive(Clap, Clone)]
 #[clap(version = crate_version!(), author = crate_authors!(), about = crate_description!())]
 pub struct CliArgs {
@@ -82,17 +84,25 @@ pub enum UnstableOptions {
     /// Disables token validation. Don't use this unless you know the
     /// ramifications of this command.
     DisableTokenValidation,
+
+    /// Tries to run without communication to MangaDex.
+    OfflineMode,
+
+    /// Serves HTTP in plaintext
+    DisableTls,
 }
 
 impl FromStr for UnstableOptions {
-    type Err = &'static str;
+    type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "override-upstream" => Ok(Self::OverrideUpstream),
             "use-lfu" => Ok(Self::UseLfu),
             "disable-token-validation" => Ok(Self::DisableTokenValidation),
-            _ => Err("Unknown unstable option"),
+            "offline-mode" => Ok(Self::OfflineMode),
+            "disable-tls" => Ok(Self::DisableTls),
+            _ => Err(format!("Unknown unstable option '{}'", s)),
         }
     }
 }
@@ -103,6 +113,8 @@ impl Display for UnstableOptions {
             Self::OverrideUpstream => write!(f, "override-upstream"),
             Self::UseLfu => write!(f, "use-lfu"),
             Self::DisableTokenValidation => write!(f, "disable-token-validation"),
+            Self::OfflineMode => write!(f, "offline-mode"),
+            Self::DisableTls => write!(f, "disable-tls"),
         }
     }
 }

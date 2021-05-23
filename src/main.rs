@@ -29,7 +29,7 @@ use thiserror::Error;
 
 use crate::cache::mem::{Lfu, Lru};
 use crate::cache::{MemoryCache, ENCRYPTION_KEY};
-use crate::config::UnstableOptions;
+use crate::config::{UnstableOptions, OFFLINE_MODE};
 use crate::state::DynamicServerCert;
 
 mod cache;
@@ -60,8 +60,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
     sodiumoxide::init().expect("Failed to initialize crypto");
     // It's ok to fail early here, it would imply we have a invalid config.
     dotenv::dotenv().ok();
-    let cli_args = CliArgs::parse();
 
+    //
+    // Config loading
+    //
+
+    let cli_args = CliArgs::parse();
     let port = cli_args.port;
     let memory_max_size = cli_args
         .memory_quota
@@ -71,6 +75,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let cache_path = cli_args.cache_path.clone();
     let low_mem_mode = cli_args.low_memory;
     let use_lfu = cli_args.unstable_options.contains(&UnstableOptions::UseLfu);
+    let disable_tls = cli_args
+        .unstable_options
+        .contains(&UnstableOptions::DisableTls);
+    OFFLINE_MODE.store(
+        cli_args
+            .unstable_options
+            .contains(&UnstableOptions::OfflineMode),
+        Ordering::Release,
+    );
+
+    //
+    // Logging and warnings
+    //
 
     let log_level = match (cli_args.quiet, cli_args.verbose) {
         (n, _) if n > 2 => LevelFilter::Off,
@@ -103,9 +120,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
         ENCRYPTION_KEY.set(gen_key()).unwrap();
     }
 
+    metrics::init();
+
     // HTTP Server init
 
-    let server = ServerState::init(&client_secret, &cli_args).await?;
+    let server = if OFFLINE_MODE.load(Ordering::Acquire) {
+        ServerState::init_offline()
+    } else {
+        ServerState::init(&client_secret, &cli_args).await?
+    };
     let data_0 = Arc::new(RwLockServerState(RwLock::new(server)));
     let data_1 = Arc::clone(&data_0);
 
@@ -126,28 +149,32 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let system = &system;
         let client_secret = client_secret.clone();
         let running_2 = Arc::clone(&running_1);
-        System::new().block_on(async move {
-            if running_2.load(Ordering::SeqCst) {
-                send_stop(&client_secret).await;
-            } else {
-                warn!("Got second Ctrl-C, forcefully exiting");
-                system.stop()
-            }
-        });
+        if !OFFLINE_MODE.load(Ordering::Acquire) {
+            System::new().block_on(async move {
+                if running_2.load(Ordering::SeqCst) {
+                    send_stop(&client_secret).await;
+                } else {
+                    warn!("Got second Ctrl-C, forcefully exiting");
+                    system.stop()
+                }
+            });
+        }
         running_1.store(false, Ordering::SeqCst);
     })
     .expect("Error setting Ctrl-C handler");
 
     // Spawn ping task
-    spawn(async move {
-        let mut interval = time::interval(Duration::from_secs(90));
-        let mut data = Arc::clone(&data_0);
-        loop {
-            interval.tick().await;
-            debug!("Sending ping!");
-            ping::update_server_state(&client_secret_1, &cli_args, &mut data).await;
-        }
-    });
+    if !OFFLINE_MODE.load(Ordering::Acquire) {
+        spawn(async move {
+            let mut interval = time::interval(Duration::from_secs(90));
+            let mut data = Arc::clone(&data_0);
+            loop {
+                interval.tick().await;
+                debug!("Sending ping!");
+                ping::update_server_state(&client_secret_1, &cli_args, &mut data).await;
+            }
+        });
+    }
 
     let cache = DiskCache::new(disk_quota, cache_path.clone()).await;
     let cache: Arc<dyn Cache> = if low_mem_mode {
@@ -161,19 +188,25 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let cache_0 = Arc::clone(&cache);
 
     // Start HTTPS server
-    HttpServer::new(move || {
+    let server = HttpServer::new(move || {
         App::new()
             .service(routes::token_data)
-            .service(routes::metrics)
             .service(routes::token_data_saver)
+            .service(routes::metrics)
             .route("{tail:.*}", web::get().to(routes::default))
             .app_data(Data::from(Arc::clone(&data_1)))
             .app_data(Data::from(Arc::clone(&cache_0)))
     })
-    .shutdown_timeout(60)
-    .bind_rustls(format!("0.0.0.0:{}", port), tls_config)?
-    .run()
-    .await?;
+    .shutdown_timeout(60);
+
+    if disable_tls {
+        server.bind(format!("0.0.0.0:{}", port))?.run().await?;
+    } else {
+        server
+            .bind_rustls(format!("0.0.0.0:{}", port), tls_config)?
+            .run()
+            .await?;
+    }
 
     // Waiting for us to finish sending stop message
     while running.load(Ordering::SeqCst) {
@@ -230,6 +263,17 @@ fn print_preamble_and_warnings(args: &CliArgs) -> Result<(), Box<dyn Error>> {
 
     if !args.unstable_options.is_empty() {
         warn!("Unstable options are enabled. These options should not be used in production!");
+    }
+
+    if args
+        .unstable_options
+        .contains(&UnstableOptions::OfflineMode)
+    {
+        warn!("Running in offline mode. No communication to MangaDex will be made!");
+    }
+
+    if args.unstable_options.contains(&UnstableOptions::DisableTls) {
+        warn!("Serving insecure traffic! You better be running this for development only.");
     }
 
     if args.override_upstream.is_some()

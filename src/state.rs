@@ -1,6 +1,7 @@
+use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::config::{CliArgs, UnstableOptions, SEND_SERVER_VERSION, VALIDATE_TOKENS};
+use crate::config::{CliArgs, UnstableOptions, OFFLINE_MODE, SEND_SERVER_VERSION, VALIDATE_TOKENS};
 use crate::ping::{Request, Response, CONTROL_CENTER_PING_URL};
 use arc_swap::ArcSwap;
 use log::{error, info, warn};
@@ -9,7 +10,7 @@ use parking_lot::RwLock;
 use rustls::sign::{CertifiedKey, SigningKey};
 use rustls::Certificate;
 use rustls::{ClientHello, ResolvesServerCert};
-use sodiumoxide::crypto::box_::PrecomputedKey;
+use sodiumoxide::crypto::box_::{PrecomputedKey, PRECOMPUTEDKEYBYTES};
 use thiserror::Error;
 use url::Url;
 
@@ -142,6 +143,16 @@ impl ServerState {
                     Err(ServerInitError::SendFailure(e))
                 }
             },
+        }
+    }
+
+    pub fn init_offline() -> Self {
+        assert!(OFFLINE_MODE.load(Ordering::Acquire));
+        Self {
+            precomputed_key: PrecomputedKey::from_slice(&[41; PRECOMPUTEDKEYBYTES]).unwrap(),
+            image_server: Url::from_file_path("/dev/null").unwrap(),
+            url: Url::from_str("http://localhost").unwrap(),
+            url_overridden: false,
         }
     }
 }

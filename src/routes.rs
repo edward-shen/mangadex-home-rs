@@ -1,5 +1,6 @@
 use std::sync::atomic::Ordering;
 
+use actix_web::error::ErrorNotFound;
 use actix_web::http::header::{
     ACCESS_CONTROL_ALLOW_ORIGIN, ACCESS_CONTROL_EXPOSE_HEADERS, CACHE_CONTROL, CONTENT_LENGTH,
     CONTENT_TYPE, LAST_MODIFIED, X_CONTENT_TYPE_OPTIONS,
@@ -21,7 +22,7 @@ use thiserror::Error;
 
 use crate::cache::{Cache, CacheKey, ImageMetadata, UpstreamError};
 use crate::client_api_version;
-use crate::config::{SEND_SERVER_VERSION, VALIDATE_TOKENS};
+use crate::config::{OFFLINE_MODE, SEND_SERVER_VERSION, VALIDATE_TOKENS};
 use crate::metrics::{
     CACHE_HIT_COUNTER, CACHE_MISS_COUNTER, REQUESTS_DATA_COUNTER, REQUESTS_DATA_SAVER_COUNTER,
     REQUESTS_OTHER_COUNTER, REQUESTS_TOTAL_COUNTER,
@@ -102,7 +103,16 @@ pub async fn default(state: Data<RwLockServerState>, req: HttpRequest) -> impl R
         state.0.read().image_server,
         req.path().chars().skip(1).collect::<String>()
     );
-    info!("Got unknown path, just proxying: {}", path);
+
+    if OFFLINE_MODE.load(Ordering::Acquire) {
+        info!("Got unknown path in offline mode, returning 404: {}", path);
+        return ServerResponse::HttpResponse(
+            ErrorNotFound("Path is not valid in offline mode").into(),
+        );
+    } else {
+        info!("Got unknown path, just proxying: {}", path);
+    }
+
     let resp = match HTTP_CLIENT.get(path).send().await {
         Ok(resp) => resp,
         Err(e) => {
@@ -230,6 +240,13 @@ async fn fetch_image(
     }
 
     CACHE_MISS_COUNTER.inc();
+
+    // If in offline mode, return early since there's nothing else we can do
+    if OFFLINE_MODE.load(Ordering::Acquire) {
+        return ServerResponse::HttpResponse(
+            ErrorNotFound("Offline mode enabled and image not in cache").into(),
+        );
+    }
 
     // It's important to not get a write lock before this request, else we're
     // holding the read lock until the await resolves.
