@@ -11,7 +11,7 @@ use actix_web::{get, web::Data, HttpRequest, HttpResponse, Responder};
 use base64::DecodeError;
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
-use futures::{Stream, TryStreamExt};
+use futures::{AsyncReadExt, Stream, TryStreamExt};
 use log::{debug, error, info, warn};
 use once_cell::sync::Lazy;
 use prometheus::{Encoder, TextEncoder};
@@ -182,8 +182,10 @@ fn validate_token(
         return Err(TokenValidationError::IncompleteNonce);
     }
 
-    let nonce = Nonce::from_slice(&data[..NONCEBYTES]).ok_or(TokenValidationError::InvalidNonce)?;
-    let decrypted = open_precomputed(&data[NONCEBYTES..], &nonce, precomputed_key)
+    let (nonce, encrypted) = data.split_at(NONCEBYTES);
+
+    let nonce = Nonce::from_slice(&nonce).ok_or(TokenValidationError::InvalidNonce)?;
+    let decrypted = open_precomputed(&encrypted, &nonce, precomputed_key)
         .map_err(|_| TokenValidationError::DecryptionFailure)?;
 
     let parsed_token: Token =
