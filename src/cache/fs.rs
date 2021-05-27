@@ -89,12 +89,13 @@ pub(super) async fn read_file(
         if ENCRYPTION_KEY.get().is_some() {
             // invalidate cache since we're running in at-rest encryption and
             // the file wasn't encrypted.
-            warn!("Found file, but encrypted header was not found. Assuming corrupted!");
+            warn!("Found file but was not encrypted!");
             return None;
         }
 
         reader = Some(Box::pin(File::from_std(file_0)));
         parsed_metadata = Some(metadata);
+        debug!("Found not encrypted file");
     } else {
         let mut file = File::from_std(file_0);
         let file_0 = file.try_clone().await.unwrap();
@@ -131,6 +132,10 @@ pub(super) async fn read_file(
 
         let mut deserializer = serde_json::Deserializer::from_reader(file_0.into_std().await);
         parsed_metadata = ImageMetadata::deserialize(&mut deserializer).ok();
+
+        if parsed_metadata.is_some() {
+            debug!("Found encrypted file");
+        }
     }
 
     // parsed_metadata is either set or unset here. If it's set then we
@@ -141,11 +146,13 @@ pub(super) async fn read_file(
         // not possible to move this into a map_or_else without cloning `file`.
         #[allow(clippy::option_if_let_else)]
         let stream = if let Some(status) = WRITING_STATUS.read().await.get(path).map(Clone::clone) {
+            debug!("Got an in-progress stream");
             InnerStream::Concurrent(ConcurrentFsStream::from_reader(
                 reader,
                 WatchStream::new(status),
             ))
         } else {
+            debug!("Got a completed stream");
             InnerStream::Completed(FramedRead::new(reader, BytesCodec::new()))
         };
 
@@ -296,7 +303,6 @@ where
             std::mem::drop(remove_file(&path_buf).await);
         } else {
             writer.flush().await?;
-            // writer.sync_all().await?; // we need metadata
             debug!("writing to file done");
         }
 
