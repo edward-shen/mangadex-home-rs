@@ -11,7 +11,7 @@ use actix_web::{get, web::Data, HttpRequest, HttpResponse, Responder};
 use base64::DecodeError;
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
-use futures::{AsyncReadExt, Stream, TryStreamExt};
+use futures::{Stream, TryStreamExt};
 use log::{debug, error, info, warn};
 use once_cell::sync::Lazy;
 use prometheus::{Encoder, TextEncoder};

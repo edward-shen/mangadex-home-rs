@@ -75,7 +75,7 @@ impl ServerState {
                             }
                         })?;
 
-                    PREVIOUSLY_COMPROMISED.store(resp.paused, Ordering::Release);
+                    PREVIOUSLY_COMPROMISED.store(resp.compromised, Ordering::Release);
                     if resp.compromised {
                         error!("Got compromised response from control center!");
                     }

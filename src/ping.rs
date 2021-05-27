@@ -176,9 +176,10 @@ pub async fn update_server_state(secret: &str, cli: &CliArgs, data: &mut Arc<RwL
                 debug!("got write guard for server state");
                 let mut write_guard = data.0.write();
 
-                if !write_guard.url_overridden && write_guard.image_server != resp.image_server {
+                let image_server_changed = write_guard.image_server != resp.image_server;
+                if !write_guard.url_overridden && image_server_changed {
                     write_guard.image_server = resp.image_server;
-                } else {
+                } else if image_server_changed {
                     warn!("Ignoring new upstream url!");
                 }
 
@@ -220,7 +221,7 @@ pub async fn update_server_state(secret: &str, cli: &CliArgs, data: &mut Arc<RwL
                     PREVIOUSLY_COMPROMISED.store(resp.compromised, Ordering::Release);
                     if resp.compromised {
                         error!("Got compromised response from control center!");
-                    } else {
+                    } else if previously_compromised {
                         info!("No longer compromised!");
                     }
                 }
