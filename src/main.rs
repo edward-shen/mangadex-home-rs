@@ -190,6 +190,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Start HTTPS server
     let server = HttpServer::new(move || {
         App::new()
+            .service(routes::index)
             .service(routes::token_data)
             .service(routes::token_data_saver)
             .service(routes::metrics)

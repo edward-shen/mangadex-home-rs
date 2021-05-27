@@ -60,6 +60,11 @@ impl Responder for ServerResponse {
     }
 }
 
+#[get("/")]
+async fn index() -> impl Responder {
+    HttpResponse::Ok().body(include_str!("index.html"))
+}
+
 #[allow(clippy::future_not_send)]
 #[get("/{token}/data/{chapter_hash}/{file_name}")]
 async fn token_data(
