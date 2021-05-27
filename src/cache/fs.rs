@@ -379,7 +379,8 @@ impl AsyncWrite for EncryptedDiskWriter {
         {
             Poll::Ready(Ok(n)) => {
                 new_self.write_buffer.drain(..n);
-                Poll::Ready(Ok(n))
+                // We buffered all the bytes that were provided to use.
+                Poll::Ready(Ok(buf.len()))
             }
             poll => poll,
         }
@@ -389,7 +390,24 @@ impl AsyncWrite for EncryptedDiskWriter {
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), std::io::Error>> {
-        self.file.as_mut().poll_flush(cx)
+        if !self.as_ref().write_buffer.is_empty() {
+            let new_self = Pin::into_inner(self);
+            let buffer = new_self.write_buffer.as_ref();
+            match new_self.file.as_mut().poll_write(cx, buffer) {
+                Poll::Ready(res) => {
+                    let n = res?;
+                    new_self.write_buffer.drain(..n);
+                    // We're immediately ready to do some more flushing!
+                    cx.waker().wake_by_ref();
+                    // Return pending here because we still need to flush the
+                    // file
+                    Poll::Pending
+                }
+                Poll::Pending => Poll::Pending,
+            }
+        } else {
+            self.file.as_mut().poll_flush(cx)
+        }
     }
 
     fn poll_shutdown(
