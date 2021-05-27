@@ -106,8 +106,8 @@ pub(super) async fn read_file(
         // else, just directly read from file.
         if let Some(key) = ENCRYPTION_KEY.get() {
             let mut header_bytes = [0; HEADERBYTES];
-            if file.read_exact(&mut header_bytes).await.is_err() {
-                warn!("Found file, but encrypted header was not found. Assuming corrupted!");
+            if let Err(e) = file.read_exact(&mut header_bytes).await {
+                warn!("Found file but failed reading header: {}", e);
                 return None;
             }
 
@@ -158,6 +158,7 @@ pub(super) async fn read_file(
 
         parsed_metadata.map(|metadata| Ok((stream, maybe_header, metadata)))
     } else {
+        debug!("Reader was invalid, file is corrupt");
         None
     }
 }

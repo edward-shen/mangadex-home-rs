@@ -12,7 +12,7 @@ use base64::DecodeError;
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use futures::{Stream, TryStreamExt};
-use log::{debug, error, info, warn};
+use log::{debug, error, info, trace, warn};
 use once_cell::sync::Lazy;
 use prometheus::{Encoder, TextEncoder};
 use reqwest::{Client, StatusCode};
@@ -347,7 +347,7 @@ fn construct_response(
     data: impl Stream<Item = Result<Bytes, UpstreamError>> + Unpin + 'static,
     metadata: &ImageMetadata,
 ) -> ServerResponse {
-    debug!("Constructing response");
+    trace!("Constructing response");
 
     let mut resp = HttpResponse::Ok();
     if let Some(content_type) = metadata.content_type {
