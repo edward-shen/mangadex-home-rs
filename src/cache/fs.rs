@@ -33,10 +33,7 @@ use sodiumoxide::crypto::secretstream::{
     Header, Pull, Push, Stream as SecretStream, Tag, HEADERBYTES,
 };
 use tokio::fs::{create_dir_all, remove_file, File};
-use tokio::io::{
-    AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, BufReader,
-    ReadBuf,
-};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::sync::mpsc::Sender;
 use tokio::sync::watch::{channel, Receiver};
 use tokio::sync::RwLock;
@@ -78,12 +75,35 @@ static WRITING_STATUS: Lazy<RwLock<HashMap<PathBuf, Receiver<WritingStatus>>>> =
 pub(super) async fn read_file(
     path: &Path,
 ) -> Option<Result<(InnerStream, Option<Header>, ImageMetadata), std::io::Error>> {
-    let mut file = File::open(path).await.ok()?;
+    let file = std::fs::File::open(path).ok()?;
+    let file_0 = file.try_clone().unwrap();
+    // Try reading decrypted header first...
+    let mut deserializer = serde_json::Deserializer::from_reader(file);
+    let maybe_metadata = ImageMetadata::deserialize(&mut deserializer);
 
-    let mut reader = {
+    let parsed_metadata;
+    let mut maybe_header = None;
+    let mut reader: Option<Pin<Box<dyn AsyncRead + Send>>> = None;
+    if let Ok(metadata) = maybe_metadata {
+        // image is decrypted
+        if ENCRYPTION_KEY.get().is_some() {
+            // invalidate cache since we're running in at-rest encryption and
+            // the file wasn't encrypted.
+            warn!("Found file, but encrypted header was not found. Assuming corrupted!");
+            return None;
+        }
+
+        reader = Some(Box::pin(File::from_std(file_0)));
+        parsed_metadata = Some(metadata);
+    } else {
+        let mut file = File::from_std(file_0);
+        let file_0 = file.try_clone().await.unwrap();
+
+        // image is decrypted or corrupt
+
         // If the encryption key was set, use the encrypted disk reader instead;
         // else, just directly read from file.
-        let inner_reader: Pin<Box<dyn AsyncRead + Send>> = if let Some(key) = ENCRYPTION_KEY.get() {
+        if let Some(key) = ENCRYPTION_KEY.get() {
             let mut header_bytes = [0; HEADERBYTES];
             if file.read_exact(&mut header_bytes).await.is_err() {
                 warn!("Found file, but encrypted header was not found. Assuming corrupted!");
@@ -104,38 +124,35 @@ pub(super) async fn read_file(
                 return None;
             };
 
-            Box::pin(EncryptedDiskReader::new(file, secret_stream))
+            maybe_header = Some(header);
+
+            reader = Some(Box::pin(EncryptedDiskReader::new(file, secret_stream)));
+        }
+
+        let mut deserializer = serde_json::Deserializer::from_reader(file_0.into_std().await);
+        parsed_metadata = ImageMetadata::deserialize(&mut deserializer).ok();
+    }
+
+    // parsed_metadata is either set or unset here. If it's set then we
+    // successfully decoded the data; otherwise the file is garbage.
+
+    if let Some(reader) = reader {
+        // False positive lint, `file` is used in both cases, which means that it's
+        // not possible to move this into a map_or_else without cloning `file`.
+        #[allow(clippy::option_if_let_else)]
+        let stream = if let Some(status) = WRITING_STATUS.read().await.get(path).map(Clone::clone) {
+            InnerStream::Concurrent(ConcurrentFsStream::from_reader(
+                reader,
+                WatchStream::new(status),
+            ))
         } else {
-            Box::pin(file)
+            InnerStream::Completed(FramedRead::new(reader, BytesCodec::new()))
         };
 
-        BufReader::new(inner_reader)
-    };
-
-    let metadata = {
-        let mut read = String::new();
-        reader
-            .read_line(&mut read)
-            .await
-            .expect("failed to read metadata");
-        serde_json::from_str(&read).ok()?
-    };
-
-    let reader = Box::pin(reader);
-
-    // False positive lint, `file` is used in both cases, which means that it's
-    // not possible to move this into a map_or_else without cloning `file`.
-    #[allow(clippy::option_if_let_else)]
-    let stream = if let Some(status) = WRITING_STATUS.read().await.get(path).map(Clone::clone) {
-        InnerStream::Concurrent(ConcurrentFsStream::from_reader(
-            reader,
-            WatchStream::new(status),
-        ))
+        parsed_metadata.map(|metadata| Ok((stream, maybe_header, metadata)))
     } else {
-        InnerStream::Completed(FramedRead::new(reader, BytesCodec::new()))
-    };
-
-    Some(Ok((stream, None, metadata)))
+        None
+    }
 }
 
 struct EncryptedDiskReader {
@@ -246,7 +263,6 @@ where
         let mut acc_bytes = BytesMut::new();
         let accumulate = on_complete.is_some();
         writer.write_all(metadata_string.as_bytes()).await?;
-        writer.write_all(b"\n").await?;
 
         while let Some(bytes) = byte_stream.next().await {
             if let Ok(mut bytes) = bytes {
