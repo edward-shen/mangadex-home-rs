@@ -43,7 +43,7 @@ mod stop;
 #[macro_export]
 macro_rules! client_api_version {
     () => {
-        "30"
+        "31"
     };
 }
 
