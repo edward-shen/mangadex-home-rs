@@ -1,4 +1,5 @@
 use std::sync::atomic::Ordering;
+use std::time::Duration;
 
 use actix_web::error::ErrorNotFound;
 use actix_web::http::header::{
@@ -31,7 +32,14 @@ use crate::state::RwLockServerState;
 
 pub const BASE64_CONFIG: base64::Config = base64::Config::new(base64::CharacterSet::UrlSafe, false);
 
-static HTTP_CLIENT: Lazy<Client> = Lazy::new(Client::new);
+static HTTP_CLIENT: Lazy<Client> = Lazy::new(|| {
+    Client::builder()
+        .pool_idle_timeout(Duration::from_secs(180))
+        .https_only(true)
+        .http2_prior_knowledge()
+        .build()
+        .expect("Client initialization to work")
+});
 
 const SERVER_ID_STRING: &str = concat!(
     env!("CARGO_CRATE_NAME"),
