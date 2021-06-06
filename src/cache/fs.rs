@@ -397,7 +397,9 @@ impl AsyncWrite for EncryptedDiskWriter {
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), std::io::Error>> {
-        if !self.as_ref().write_buffer.is_empty() {
+        if self.as_ref().write_buffer.is_empty() {
+            self.file.as_mut().poll_flush(cx)
+        } else {
             let new_self = Pin::into_inner(self);
             let buffer = new_self.write_buffer.as_ref();
             match new_self.file.as_mut().poll_write(cx, buffer) {
@@ -412,8 +414,6 @@ impl AsyncWrite for EncryptedDiskWriter {
                 }
                 Poll::Pending => Poll::Pending,
             }
-        } else {
-            self.file.as_mut().poll_flush(cx)
         }
     }
 
