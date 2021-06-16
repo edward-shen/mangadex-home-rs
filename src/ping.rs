@@ -1,4 +1,4 @@
-use std::num::{NonZeroU16, NonZeroU64};
+use std::num::NonZeroU64;
 use std::sync::atomic::Ordering;
 use std::{io::BufReader, sync::Arc};
 
@@ -17,6 +17,7 @@ use crate::state::{
     RwLockServerState, PREVIOUSLY_COMPROMISED, PREVIOUSLY_PAUSED, TLS_CERTS,
     TLS_PREVIOUSLY_CREATED, TLS_SIGNING_KEY,
 };
+use crate::units::Port;
 use crate::{client_api_version, config::UnstableOptions};
 
 pub const CONTROL_CENTER_PING_URL: &str = "https://api.mangadex.network/ping";
@@ -24,7 +25,7 @@ pub const CONTROL_CENTER_PING_URL: &str = "https://api.mangadex.network/ping";
 #[derive(Serialize, Debug)]
 pub struct Request<'a> {
     secret: &'a str,
-    port: NonZeroU16,
+    port: Port,
     disk_space: u64,
     network_speed: NonZeroU64,
     build_version: u64,

@@ -39,6 +39,7 @@ mod ping;
 mod routes;
 mod state;
 mod stop;
+mod units;
 
 #[macro_export]
 macro_rules! client_api_version {
@@ -64,6 +65,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     //
     // Config loading
     //
+
+    let config = config::load_config();
 
     let cli_args = CliArgs::parse();
     let port = cli_args.port;
@@ -132,9 +135,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let data_0 = Arc::new(RwLockServerState(RwLock::new(server)));
     let data_1 = Arc::clone(&data_0);
 
-    // What's nice is that Rustls only supports TLS 1.2 and 1.3.
-    let mut tls_config = ServerConfig::new(NoClientAuth::new());
-    tls_config.cert_resolver = Arc::new(DynamicServerCert);
+    // Rustls only supports TLS 1.2 and 1.3.
+    let tls_config = {
+        let mut tls_config = ServerConfig::new(NoClientAuth::new());
+        tls_config.cert_resolver = Arc::new(DynamicServerCert);
+        tls_config
+    };
 
     //
     // At this point, the server is ready to start, and starts the necessary
@@ -208,11 +214,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
     })
     .shutdown_timeout(60);
 
+    let server_bind_address = format!("0.0.0.0:{}", port);
     if disable_tls {
-        server.bind(format!("0.0.0.0:{}", port))?.run().await?;
+        server.bind(server_bind_address)?.run().await?;
     } else {
         server
-            .bind_rustls(format!("0.0.0.0:{}", port), tls_config)?
+            .bind_rustls(server_bind_address, tls_config)?
             .run()
             .await?;
     }

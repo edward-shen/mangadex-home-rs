@@ -52,7 +52,7 @@ impl ServerState {
             .send()
             .await;
 
-        if config.enable_server_string {
+        if config.send_server_string {
             warn!("Client will send Server header in responses. This is not recommended!");
             SEND_SERVER_VERSION.store(true, Ordering::Release);
         }
