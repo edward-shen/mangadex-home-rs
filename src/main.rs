@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use actix_web::rt::{spawn, time, System};
 use actix_web::web::{self, Data};
-use actix_web::{App, HttpServer};
+use actix_web::{App, HttpResponse, HttpServer};
 use cache::{Cache, DiskCache};
 use clap::Clap;
 use config::CliArgs;
@@ -194,6 +194,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .service(routes::token_data)
             .service(routes::token_data_saver)
             .service(routes::metrics)
+            .route(
+                "/data/{tail:.*}",
+                web::get().to(HttpResponse::UnavailableForLegalReasons),
+            )
+            .route(
+                "/data-saver/{tail:.*}",
+                web::get().to(HttpResponse::UnavailableForLegalReasons),
+            )
             .route("{tail:.*}", web::get().to(routes::default))
             .app_data(Data::from(Arc::clone(&data_1)))
             .app_data(Data::from(Arc::clone(&cache_0)))
