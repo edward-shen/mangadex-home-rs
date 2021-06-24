@@ -197,8 +197,8 @@ fn validate_token(
 
     let (nonce, encrypted) = data.split_at(NONCEBYTES);
 
-    let nonce = Nonce::from_slice(&nonce).ok_or(TokenValidationError::InvalidNonce)?;
-    let decrypted = open_precomputed(&encrypted, &nonce, precomputed_key)
+    let nonce = Nonce::from_slice(nonce).ok_or(TokenValidationError::InvalidNonce)?;
+    let decrypted = open_precomputed(encrypted, &nonce, precomputed_key)
         .map_err(|_| TokenValidationError::DecryptionFailure)?;
 
     let parsed_token: Token =
