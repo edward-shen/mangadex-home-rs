@@ -17,6 +17,7 @@ use log::{debug, error, info, trace, warn};
 use once_cell::sync::Lazy;
 use prometheus::{Encoder, TextEncoder};
 use reqwest::{Client, StatusCode};
+use ring::signature::ECDSA_P256_SHA256_ASN1;
 use serde::Deserialize;
 use sodiumoxide::crypto::box_::{open_precomputed, Nonce, PrecomputedKey, NONCEBYTES};
 use thiserror::Error;
@@ -170,6 +171,8 @@ enum TokenValidationError {
     TokenExpired,
     #[error("Invalid chapter hash.")]
     InvalidChapterHash,
+    #[error("Invalid v32 format")]
+    InvalidV32Format,
 }
 
 impl Responder for TokenValidationError {
@@ -213,6 +216,35 @@ fn validate_token(
     }
 
     debug!("Token validated!");
+
+    Ok(())
+}
+
+fn validate_token_v32(pub_key: &[u8], token: String) -> Result<(), TokenValidationError> {
+    #[derive(Deserialize)]
+    struct Token<'a> {
+        expires: DateTime<Utc>,
+        client_id: &'a str,
+    }
+
+    let (token_base64, sig_base64) = token
+        .split_once('~')
+        .ok_or_else(|| TokenValidationError::InvalidV32Format)?;
+    let token = base64::decode_config(token_base64, BASE64_CONFIG)?;
+    let sig = base64::decode_config(sig_base64, BASE64_CONFIG)?;
+
+    ring::signature::UnparsedPublicKey::new(&ECDSA_P256_SHA256_ASN1, pub_key)
+        .verify(&token, &sig)
+        .map_err(|_| TokenValidationError::DecryptionFailure)?;
+
+    // At this point, token has a valid signature, now to check token fields
+
+    let token: Token =
+        serde_json::from_slice(&token).map_err(|_| TokenValidationError::InvalidToken)?;
+
+    if token.expires < Utc::now() {
+        return Err(TokenValidationError::TokenExpired);
+    }
 
     Ok(())
 }

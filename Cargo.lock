@@ -1172,6 +1172,7 @@ dependencies = [
  "parking_lot",
  "prometheus",
  "reqwest",
+ "ring",
  "rustls",
  "serde",
  "serde_json",
