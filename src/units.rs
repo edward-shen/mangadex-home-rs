@@ -26,7 +26,7 @@ impl Display for Port {
 pub struct Mebibytes(usize);
 
 impl Mebibytes {
-    pub const fn get(&self) -> usize {
+    pub const fn get(self) -> usize {
         self.0
     }
 }

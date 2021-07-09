@@ -27,9 +27,8 @@ pub fn load_config() -> Result<Config, serde_yaml::Error> {
     let config_file: Result<YamlArgs, _> = {
         let config_path = cli_args
             .config_path
-            .as_ref()
-            .map(PathBuf::as_path)
-            .unwrap_or(Path::new("./settings.yaml"));
+            .as_deref()
+            .unwrap_or_else(|| Path::new("./settings.yaml"));
         match File::open(config_path) {
             Ok(file) => serde_yaml::from_reader(file),
             Err(e) if e.kind() == ErrorKind::NotFound => {
@@ -138,7 +137,7 @@ struct YamlExtendedOptions {
     logging_level: LevelFilter,
 }
 
-fn default_logging_level() -> LevelFilter {
+const fn default_logging_level() -> LevelFilter {
     LevelFilter::Info
 }
 
