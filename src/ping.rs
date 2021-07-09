@@ -11,7 +11,7 @@ use serde_repr::Deserialize_repr;
 use sodiumoxide::crypto::box_::PrecomputedKey;
 use url::Url;
 
-use crate::config::{Config, UnstableOptions, VALIDATE_TOKENS};
+use crate::config::{ClientSecret, Config, UnstableOptions, VALIDATE_TOKENS};
 use crate::state::{
     RwLockServerState, PREVIOUSLY_COMPROMISED, PREVIOUSLY_PAUSED, TLS_CERTS,
     TLS_PREVIOUSLY_CREATED, TLS_SIGNING_KEY,
@@ -21,9 +21,9 @@ use crate::CLIENT_API_VERSION;
 
 pub const CONTROL_CENTER_PING_URL: &str = "https://api.mangadex.network/ping";
 
-#[derive(Serialize, Debug)]
+#[derive(Serialize)]
 pub struct Request<'a> {
-    secret: &'a str,
+    secret: &'a ClientSecret,
     port: Port,
     disk_space: Mebibytes,
     network_speed: BytesPerSecond,
@@ -32,7 +32,7 @@ pub struct Request<'a> {
 }
 
 impl<'a> Request<'a> {
-    fn from_config_and_state(secret: &'a str, config: &Config) -> Self {
+    fn from_config_and_state(secret: &'a ClientSecret, config: &Config) -> Self {
         Self {
             secret,
             port: config.port,
@@ -46,8 +46,8 @@ impl<'a> Request<'a> {
     }
 }
 
-impl<'a> From<(&'a str, &Config)> for Request<'a> {
-    fn from((secret, config): (&'a str, &Config)) -> Self {
+impl<'a> From<(&'a ClientSecret, &Config)> for Request<'a> {
+    fn from((secret, config): (&'a ClientSecret, &Config)) -> Self {
         Self {
             secret,
             port: config.port,
@@ -161,7 +161,11 @@ impl std::fmt::Debug for Tls {
     }
 }
 
-pub async fn update_server_state(secret: &str, cli: &Config, data: &mut Arc<RwLockServerState>) {
+pub async fn update_server_state(
+    secret: &ClientSecret,
+    cli: &Config,
+    data: &mut Arc<RwLockServerState>,
+) {
     let req = Request::from_config_and_state(secret, cli);
     let client = reqwest::Client::new();
     let resp = client.post(CONTROL_CENTER_PING_URL).json(&req).send().await;

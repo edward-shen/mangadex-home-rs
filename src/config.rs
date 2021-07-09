@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use clap::{crate_authors, crate_description, crate_version, Clap};
 use log::LevelFilter;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 use url::Url;
 
 use crate::units::{KilobitsPerSecond, Mebibytes, Port};
@@ -19,7 +20,17 @@ use crate::units::{KilobitsPerSecond, Mebibytes, Port};
 pub static VALIDATE_TOKENS: AtomicBool = AtomicBool::new(false);
 pub static OFFLINE_MODE: AtomicBool = AtomicBool::new(false);
 
-pub fn load_config() -> Result<Config, serde_yaml::Error> {
+#[derive(Error, Debug)]
+pub enum ConfigError {
+    #[error("No config found. One has been created for you to modify.")]
+    NotInitialized,
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Parse(#[from] serde_yaml::Error),
+}
+
+pub fn load_config() -> Result<Config, ConfigError> {
     // Load cli args first
     let cli_args: CliArgs = CliArgs::parse();
 
@@ -40,13 +51,10 @@ pub fn load_config() -> Result<Config, serde_yaml::Error> {
 
                 let default_config = include_str!("../settings.sample.yaml");
                 file.write_all(default_config.as_bytes()).unwrap();
-                serde_yaml::from_str(default_config)
+
+                return Err(ConfigError::NotInitialized);
             }
-            e => panic!(
-                "Failed to open file at {}: {:?}",
-                config_path.to_string_lossy(),
-                e
-            ),
+            Err(e) => return Err(e.into()),
         }
     };
 
@@ -129,7 +137,11 @@ impl Config {
                 .unwrap_or(unsafe { NonZeroU16::new_unchecked(60) }),
             log_level,
             // secret should never be in CLI
-            client_secret: file_args.server_settings.secret,
+            client_secret: if let Ok(v) = std::env::var("CLIENT_SECRET") {
+                ClientSecret(v)
+            } else {
+                file_args.server_settings.secret
+            },
             port: cli_args.port.unwrap_or(file_args.server_settings.port),
             bind_address: SocketAddr::new(
                 file_args
@@ -188,7 +200,7 @@ struct YamlServerSettings {
 }
 
 // this intentionally does not implement display or debug
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Clone)]
 pub struct ClientSecret(String);
 
 #[derive(Deserialize, Default)]

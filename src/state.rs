@@ -1,7 +1,7 @@
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::config::{Config, UnstableOptions, OFFLINE_MODE, VALIDATE_TOKENS};
+use crate::config::{ClientSecret, Config, UnstableOptions, OFFLINE_MODE, VALIDATE_TOKENS};
 use crate::ping::{Request, Response, CONTROL_CENTER_PING_URL};
 use arc_swap::ArcSwap;
 use log::{error, info, warn};
@@ -45,7 +45,7 @@ pub enum ServerInitError {
 }
 
 impl ServerState {
-    pub async fn init(secret: &str, config: &Config) -> Result<Self, ServerInitError> {
+    pub async fn init(secret: &ClientSecret, config: &Config) -> Result<Self, ServerInitError> {
         let resp = reqwest::Client::new()
             .post(CONTROL_CENTER_PING_URL)
             .json(&Request::from((secret, config)))

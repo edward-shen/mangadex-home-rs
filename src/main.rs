@@ -2,11 +2,10 @@
 // We're end users, so these is ok
 #![allow(clippy::module_name_repetitions)]
 
-use std::env::{self, VarError};
+use std::env::VarError;
 use std::error::Error;
 use std::fmt::Display;
 use std::num::ParseIntError;
-use std::process;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -59,7 +58,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Config loading
     //
 
-    let config = config::load_config()?;
+    let config = match config::load_config() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("{}", e);
+            return Err(Box::new(e) as Box<_>);
+        }
+    };
+
     let memory_quota = config.memory_quota;
     let disk_quota = config.disk_quota;
     let cache_type = config.cache_type;
@@ -80,13 +86,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         return Err(e);
     }
 
-    let client_secret = if let Ok(v) = env::var("CLIENT_SECRET") {
-        v
-    } else {
-        error!("Client secret not found in ENV. Please set CLIENT_SECRET.");
-        process::exit(1);
-    };
-    let client_secret_1 = client_secret.clone();
+    let client_secret = config.client_secret.clone();
+    let client_secret_1 = config.client_secret.clone();
 
     if config.ephemeral_disk_encryption {
         info!("Running with at-rest encryption!");

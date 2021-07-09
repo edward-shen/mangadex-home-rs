@@ -2,14 +2,16 @@ use log::{info, warn};
 use reqwest::StatusCode;
 use serde::Serialize;
 
+use crate::config::ClientSecret;
+
 const CONTROL_CENTER_STOP_URL: &str = "https://api.mangadex.network/ping";
 
 #[derive(Serialize)]
 struct StopRequest<'a> {
-    secret: &'a str,
+    secret: &'a ClientSecret,
 }
 
-pub async fn send_stop(secret: &str) {
+pub async fn send_stop(secret: &ClientSecret) {
     let request = StopRequest { secret };
     let client = reqwest::Client::new();
     match client
