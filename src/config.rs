@@ -268,7 +268,7 @@ struct CliArgs {
     pub ephemeral_disk_encryption: Option<bool>,
     #[clap(short, long)]
     pub config_path: Option<PathBuf>,
-    #[clap(short, long)]
+    #[clap(short = 't', long)]
     pub cache_type: Option<CacheType>,
 }
 
