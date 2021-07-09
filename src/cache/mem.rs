@@ -86,7 +86,7 @@ where
     MemoryCacheImpl: 'static + InternalMemoryCache,
     ColdCache: 'static + Cache,
 {
-    pub async fn new(inner: ColdCache, max_mem_size: u64) -> Arc<Self> {
+    pub async fn new(inner: ColdCache, max_mem_size: crate::units::Bytes) -> Arc<Self> {
         let (tx, mut rx) = channel(100);
         let new_self = Arc::new(Self {
             inner,
@@ -98,7 +98,7 @@ where
         let new_self_0 = Arc::clone(&new_self);
         tokio::spawn(async move {
             let new_self = new_self_0;
-            let max_mem_size = max_mem_size / 20 * 19;
+            let max_mem_size = max_mem_size.get() / 20 * 19;
             while let Some((key, bytes, metadata, size)) = rx.recv().await {
                 // Add to memory cache
                 // We can add first because we constrain our memory usage to 95%
@@ -112,7 +112,7 @@ where
                     .push(key, (bytes, metadata, size));
 
                 // Pop if too large
-                while new_self.cur_mem_size.load(Ordering::Acquire) >= max_mem_size {
+                while new_self.cur_mem_size.load(Ordering::Acquire) >= max_mem_size as u64 {
                     let popped = new_self
                         .mem_cache
                         .lock()

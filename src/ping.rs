@@ -1,4 +1,3 @@
-use std::num::NonZeroU64;
 use std::sync::atomic::Ordering;
 use std::{io::BufReader, sync::Arc};
 
@@ -12,13 +11,13 @@ use serde_repr::Deserialize_repr;
 use sodiumoxide::crypto::box_::PrecomputedKey;
 use url::Url;
 
-use crate::config::{CliArgs, VALIDATE_TOKENS};
+use crate::config::{Config, UnstableOptions, VALIDATE_TOKENS};
 use crate::state::{
     RwLockServerState, PREVIOUSLY_COMPROMISED, PREVIOUSLY_PAUSED, TLS_CERTS,
     TLS_PREVIOUSLY_CREATED, TLS_SIGNING_KEY,
 };
-use crate::units::Port;
-use crate::{client_api_version, config::UnstableOptions};
+use crate::units::{BytesPerSecond, Mebibytes, Port};
+use crate::CLIENT_API_VERSION;
 
 pub const CONTROL_CENTER_PING_URL: &str = "https://api.mangadex.network/ping";
 
@@ -26,22 +25,20 @@ pub const CONTROL_CENTER_PING_URL: &str = "https://api.mangadex.network/ping";
 pub struct Request<'a> {
     secret: &'a str,
     port: Port,
-    disk_space: u64,
-    network_speed: NonZeroU64,
-    build_version: u64,
+    disk_space: Mebibytes,
+    network_speed: BytesPerSecond,
+    build_version: usize,
     tls_created_at: Option<String>,
 }
 
 impl<'a> Request<'a> {
-    fn from_config_and_state(secret: &'a str, config: &CliArgs) -> Self {
+    fn from_config_and_state(secret: &'a str, config: &Config) -> Self {
         Self {
             secret,
             port: config.port,
             disk_space: config.disk_quota,
-            network_speed: config.network_speed,
-            build_version: client_api_version!()
-                .parse()
-                .expect("to parse the build version"),
+            network_speed: config.network_speed.into(),
+            build_version: CLIENT_API_VERSION,
             tls_created_at: TLS_PREVIOUSLY_CREATED
                 .get()
                 .map(|v| v.load().as_ref().clone()),
@@ -49,17 +46,14 @@ impl<'a> Request<'a> {
     }
 }
 
-#[allow(clippy::fallible_impl_from)]
-impl<'a> From<(&'a str, &CliArgs)> for Request<'a> {
-    fn from((secret, config): (&'a str, &CliArgs)) -> Self {
+impl<'a> From<(&'a str, &Config)> for Request<'a> {
+    fn from((secret, config): (&'a str, &Config)) -> Self {
         Self {
             secret,
             port: config.port,
             disk_space: config.disk_quota,
-            network_speed: config.network_speed,
-            build_version: client_api_version!()
-                .parse()
-                .expect("to parse the build version"),
+            network_speed: config.network_speed.into(),
+            build_version: CLIENT_API_VERSION,
             tls_created_at: None,
         }
     }
@@ -167,7 +161,7 @@ impl std::fmt::Debug for Tls {
     }
 }
 
-pub async fn update_server_state(secret: &str, cli: &CliArgs, data: &mut Arc<RwLockServerState>) {
+pub async fn update_server_state(secret: &str, cli: &Config, data: &mut Arc<RwLockServerState>) {
     let req = Request::from_config_and_state(secret, cli);
     let client = reqwest::Client::new();
     let resp = client.post(CONTROL_CENTER_PING_URL).json(&req).send().await;

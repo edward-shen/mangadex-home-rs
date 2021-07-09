@@ -6,7 +6,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use bytes::Bytes;
 use futures::StreamExt;
 use log::{error, warn, LevelFilter};
 use sqlx::sqlite::SqliteConnectOptions;
@@ -14,6 +13,8 @@ use sqlx::{ConnectOptions, SqlitePool};
 use tokio::fs::remove_file;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio_stream::wrappers::ReceiverStream;
+
+use crate::units::Bytes;
 
 use super::{
     BoxedImageStream, Cache, CacheError, CacheKey, CacheStream, CallbackCache, ImageMetadata,
@@ -34,7 +35,7 @@ impl DiskCache {
     /// Constructs a new low memory cache at the provided path and capacity.
     /// This internally spawns a task that will wait for filesystem
     /// notifications when a file has been written.
-    pub async fn new(disk_max_size: u64, disk_path: PathBuf) -> Arc<Self> {
+    pub async fn new(disk_max_size: Bytes, disk_path: PathBuf) -> Arc<Self> {
         let (db_tx, db_rx) = channel(128);
         let db_pool = {
             let db_url = format!("sqlite:{}/metadata.sqlite", disk_path.to_string_lossy());
@@ -75,7 +76,7 @@ impl DiskCache {
             Arc::clone(&new_self),
             db_rx,
             db_pool,
-            disk_max_size / 20 * 19,
+            disk_max_size.get() as u64 / 20 * 19,
         ));
 
         new_self
@@ -237,7 +238,7 @@ impl CallbackCache for DiskCache {
         key: CacheKey,
         image: BoxedImageStream,
         metadata: ImageMetadata,
-        on_complete: Sender<(CacheKey, Bytes, ImageMetadata, u64)>,
+        on_complete: Sender<(CacheKey, bytes::Bytes, ImageMetadata, u64)>,
     ) -> Result<CacheStream, CacheError> {
         let channel = self.db_update_channel_sender.clone();
 

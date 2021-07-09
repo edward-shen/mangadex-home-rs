@@ -22,18 +22,37 @@ impl Display for Port {
     }
 }
 
-#[derive(Copy, Clone, Deserialize, Default, Debug, Hash, Eq, PartialEq)]
+#[derive(Copy, Clone, Serialize, Deserialize, Default, Debug, Hash, Eq, PartialEq)]
 pub struct Mebibytes(usize);
 
 impl Mebibytes {
-    pub const fn as_bytes(&self) -> usize {
-        self.0 << 20
-    }
-
     pub const fn get(&self) -> usize {
         self.0
     }
 }
 
+pub struct Bytes(usize);
+
+impl Bytes {
+    pub const fn get(&self) -> usize {
+        self.0
+    }
+}
+
+impl From<Mebibytes> for Bytes {
+    fn from(mib: Mebibytes) -> Self {
+        Self(mib.0 << 20)
+    }
+}
+
 #[derive(Copy, Clone, Deserialize, Debug, Hash, Eq, PartialEq)]
-pub struct Kilobits(NonZeroU64);
+pub struct KilobitsPerSecond(NonZeroU64);
+
+#[derive(Copy, Clone, Serialize, Debug, Hash, Eq, PartialEq)]
+pub struct BytesPerSecond(NonZeroU64);
+
+impl From<KilobitsPerSecond> for BytesPerSecond {
+    fn from(kbps: KilobitsPerSecond) -> Self {
+        Self(unsafe { NonZeroU64::new_unchecked(kbps.0.get() * 125) })
+    }
+}

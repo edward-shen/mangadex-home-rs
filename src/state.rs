@@ -1,7 +1,7 @@
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::config::{CliArgs, UnstableOptions, OFFLINE_MODE, SEND_SERVER_VERSION, VALIDATE_TOKENS};
+use crate::config::{Config, UnstableOptions, OFFLINE_MODE, VALIDATE_TOKENS};
 use crate::ping::{Request, Response, CONTROL_CENTER_PING_URL};
 use arc_swap::ArcSwap;
 use log::{error, info, warn};
@@ -45,17 +45,12 @@ pub enum ServerInitError {
 }
 
 impl ServerState {
-    pub async fn init(secret: &str, config: &CliArgs) -> Result<Self, ServerInitError> {
+    pub async fn init(secret: &str, config: &Config) -> Result<Self, ServerInitError> {
         let resp = reqwest::Client::new()
             .post(CONTROL_CENTER_PING_URL)
             .json(&Request::from((secret, config)))
             .send()
             .await;
-
-        if config.send_server_string {
-            warn!("Client will send Server header in responses. This is not recommended!");
-            SEND_SERVER_VERSION.store(true, Ordering::Release);
-        }
 
         match resp {
             Ok(resp) => match resp.json::<Response>().await {

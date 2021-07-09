@@ -5,8 +5,7 @@
 use std::env::{self, VarError};
 use std::error::Error;
 use std::fmt::Display;
-use std::hint::unreachable_unchecked;
-use std::num::{NonZeroU64, ParseIntError};
+use std::num::ParseIntError;
 use std::process;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -16,9 +15,8 @@ use actix_web::rt::{spawn, time, System};
 use actix_web::web::{self, Data};
 use actix_web::{App, HttpResponse, HttpServer};
 use cache::{Cache, DiskCache};
-use clap::Clap;
-use config::CliArgs;
-use log::{debug, error, info, warn, LevelFilter};
+use config::Config;
+use log::{debug, error, info, warn};
 use parking_lot::RwLock;
 use rustls::{NoClientAuth, ServerConfig};
 use simple_logger::SimpleLogger;
@@ -29,7 +27,7 @@ use thiserror::Error;
 
 use crate::cache::mem::{Lfu, Lru};
 use crate::cache::{MemoryCache, ENCRYPTION_KEY};
-use crate::config::{UnstableOptions, OFFLINE_MODE};
+use crate::config::{CacheType, UnstableOptions, OFFLINE_MODE};
 use crate::state::DynamicServerCert;
 
 mod cache;
@@ -41,12 +39,7 @@ mod state;
 mod stop;
 mod units;
 
-#[macro_export]
-macro_rules! client_api_version {
-    () => {
-        "31"
-    };
-}
+const CLIENT_API_VERSION: usize = 31;
 
 #[derive(Error, Debug)]
 enum ServerError {
@@ -66,46 +59,23 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Config loading
     //
 
-    let config = config::load_config();
-
-    let cli_args = CliArgs::parse();
-    let port = cli_args.port;
-    let memory_max_size = cli_args
-        .memory_quota
-        .map(NonZeroU64::get)
-        .unwrap_or_default();
-    let disk_quota = cli_args.disk_quota;
-    let cache_path = cli_args.cache_path.clone();
-    let low_mem_mode = cli_args.low_memory;
-    let use_lfu = cli_args.unstable_options.contains(&UnstableOptions::UseLfu);
-    let disable_tls = cli_args
+    let config = config::load_config()?;
+    let memory_quota = config.memory_quota;
+    let disk_quota = config.disk_quota;
+    let cache_type = config.cache_type;
+    let cache_path = config.cache_path.clone();
+    let disable_tls = config
         .unstable_options
         .contains(&UnstableOptions::DisableTls);
-    OFFLINE_MODE.store(
-        cli_args
-            .unstable_options
-            .contains(&UnstableOptions::OfflineMode),
-        Ordering::Release,
-    );
+    let bind_address = config.bind_address;
 
     //
     // Logging and warnings
     //
 
-    let log_level = match (cli_args.quiet, cli_args.verbose) {
-        (n, _) if n > 2 => LevelFilter::Off,
-        (2, _) => LevelFilter::Error,
-        (1, _) => LevelFilter::Warn,
-        (0, 0) => LevelFilter::Info,
-        (_, 1) => LevelFilter::Debug,
-        (_, n) if n > 1 => LevelFilter::Trace,
-        // compiler can't figure it out
-        _ => unsafe { unreachable_unchecked() },
-    };
+    SimpleLogger::new().with_level(config.log_level).init()?;
 
-    SimpleLogger::new().with_level(log_level).init()?;
-
-    if let Err(e) = print_preamble_and_warnings(&cli_args) {
+    if let Err(e) = print_preamble_and_warnings(&config) {
         error!("{}", e);
         return Err(e);
     }
@@ -118,7 +88,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     };
     let client_secret_1 = client_secret.clone();
 
-    if cli_args.ephemeral_disk_encryption {
+    if config.ephemeral_disk_encryption {
         info!("Running with at-rest encryption!");
         ENCRYPTION_KEY.set(gen_key()).unwrap();
     }
@@ -130,17 +100,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let server = if OFFLINE_MODE.load(Ordering::Acquire) {
         ServerState::init_offline()
     } else {
-        ServerState::init(&client_secret, &cli_args).await?
+        ServerState::init(&client_secret, &config).await?
     };
     let data_0 = Arc::new(RwLockServerState(RwLock::new(server)));
     let data_1 = Arc::clone(&data_0);
-
-    // Rustls only supports TLS 1.2 and 1.3.
-    let tls_config = {
-        let mut tls_config = ServerConfig::new(NoClientAuth::new());
-        tls_config.cert_resolver = Arc::new(DynamicServerCert);
-        tls_config
-    };
 
     //
     // At this point, the server is ready to start, and starts the necessary
@@ -177,18 +140,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
             loop {
                 interval.tick().await;
                 debug!("Sending ping!");
-                ping::update_server_state(&client_secret_1, &cli_args, &mut data).await;
+                ping::update_server_state(&client_secret_1, &config, &mut data).await;
             }
         });
     }
 
-    let cache = DiskCache::new(disk_quota, cache_path.clone()).await;
-    let cache: Arc<dyn Cache> = if low_mem_mode {
-        cache
-    } else if use_lfu {
-        MemoryCache::<Lfu, _>::new(cache, memory_max_size).await
-    } else {
-        MemoryCache::<Lru, _>::new(cache, memory_max_size).await
+    let memory_max_size = memory_quota.into();
+    let cache = DiskCache::new(disk_quota.into(), cache_path.clone()).await;
+    let cache: Arc<dyn Cache> = match cache_type {
+        CacheType::OnDisk => cache,
+        CacheType::Lru => MemoryCache::<Lfu, _>::new(cache, memory_max_size).await,
+        CacheType::Lfu => MemoryCache::<Lru, _>::new(cache, memory_max_size).await,
     };
 
     let cache_0 = Arc::clone(&cache);
@@ -214,14 +176,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
     })
     .shutdown_timeout(60);
 
-    let server_bind_address = format!("0.0.0.0:{}", port);
     if disable_tls {
-        server.bind(server_bind_address)?.run().await?;
+        server.bind(bind_address)?.run().await?;
     } else {
-        server
-            .bind_rustls(server_bind_address, tls_config)?
-            .run()
-            .await?;
+        // Rustls only supports TLS 1.2 and 1.3.
+        let tls_config = {
+            let mut tls_config = ServerConfig::new(NoClientAuth::new());
+            tls_config.cert_resolver = Arc::new(DynamicServerCert);
+            tls_config
+        };
+
+        server.bind_rustls(bind_address, tls_config)?.run().await?;
     }
 
     // Waiting for us to finish sending stop message
@@ -253,7 +218,7 @@ impl Display for InvalidCombination {
 
 impl Error for InvalidCombination {}
 
-fn print_preamble_and_warnings(args: &CliArgs) -> Result<(), Box<dyn Error>> {
+fn print_preamble_and_warnings(args: &Config) -> Result<(), Box<dyn Error>> {
     println!(concat!(
         env!("CARGO_PKG_NAME"),
         " ",

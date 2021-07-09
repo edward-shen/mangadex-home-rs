@@ -22,15 +22,14 @@ use sodiumoxide::crypto::box_::{open_precomputed, Nonce, PrecomputedKey, NONCEBY
 use thiserror::Error;
 
 use crate::cache::{Cache, CacheKey, ImageMetadata, UpstreamError};
-use crate::client_api_version;
-use crate::config::{OFFLINE_MODE, SEND_SERVER_VERSION, VALIDATE_TOKENS};
+use crate::config::{OFFLINE_MODE, VALIDATE_TOKENS};
 use crate::metrics::{
     CACHE_HIT_COUNTER, CACHE_MISS_COUNTER, REQUESTS_DATA_COUNTER, REQUESTS_DATA_SAVER_COUNTER,
     REQUESTS_OTHER_COUNTER, REQUESTS_TOTAL_COUNTER,
 };
 use crate::state::RwLockServerState;
 
-pub const BASE64_CONFIG: base64::Config = base64::Config::new(base64::CharacterSet::UrlSafe, false);
+const BASE64_CONFIG: base64::Config = base64::Config::new(base64::CharacterSet::UrlSafe, false);
 
 static HTTP_CLIENT: Lazy<Client> = Lazy::new(|| {
     Client::builder()
@@ -40,15 +39,6 @@ static HTTP_CLIENT: Lazy<Client> = Lazy::new(|| {
         .build()
         .expect("Client initialization to work")
 });
-
-const SERVER_ID_STRING: &str = concat!(
-    env!("CARGO_CRATE_NAME"),
-    " ",
-    env!("CARGO_PKG_VERSION"),
-    " (",
-    client_api_version!(),
-    ") - Conforming to spec revision b82043289",
-);
 
 enum ServerResponse {
     TokenValidationError(TokenValidationError),
@@ -225,10 +215,6 @@ fn push_headers(builder: &mut HttpResponseBuilder) -> &mut HttpResponseBuilder {
         .insert_header((ACCESS_CONTROL_EXPOSE_HEADERS, "*"))
         .insert_header((CACHE_CONTROL, "public, max-age=1209600"))
         .insert_header(("Timing-Allow-Origin", "https://mangadex.org"));
-
-    if SEND_SERVER_VERSION.load(Ordering::Acquire) {
-        builder.insert_header(("Server", SERVER_ID_STRING));
-    }
 
     builder
 }
