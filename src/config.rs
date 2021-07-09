@@ -72,6 +72,7 @@ pub fn load_config() -> Result<Config, ConfigError> {
     Ok(config)
 }
 
+#[derive(Debug)]
 /// Represents a fully parsed config, from a variety of sources.
 pub struct Config {
     pub cache_type: CacheType,
@@ -199,9 +200,15 @@ struct YamlServerSettings {
     external_ip: Option<IpAddr>,
 }
 
-// this intentionally does not implement display or debug
+// this intentionally does not implement display
 #[derive(Deserialize, Serialize, Clone)]
 pub struct ClientSecret(String);
+
+impl std::fmt::Debug for ClientSecret {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[client secret]")
+    }
+}
 
 #[derive(Deserialize, Default)]
 struct YamlExtendedOptions {
@@ -213,7 +220,7 @@ struct YamlExtendedOptions {
     cache_path: Option<PathBuf>,
 }
 
-#[derive(Deserialize, Copy, Clone)]
+#[derive(Deserialize, Copy, Clone, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum CacheType {
     OnDisk,

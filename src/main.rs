@@ -86,6 +86,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         return Err(e);
     }
 
+    debug!("{:?}", &config);
+
     let client_secret = config.client_secret.clone();
     let client_secret_1 = config.client_secret.clone();
 
