@@ -93,7 +93,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         ENCRYPTION_KEY.set(gen_key()).unwrap();
     }
 
-    metrics::init();
+    if config.enable_metrics {
+        metrics::init();
+    }
 
     // HTTP Server init
 

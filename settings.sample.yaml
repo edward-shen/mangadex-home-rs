@@ -18,6 +18,8 @@
 # MangaDex@Home configuration file
 # We are pleased to have you here
 # May fate stay the night with you!
+#
+# Default values are commented out.
 
 # The size in mebibytes of the cache
 # You can use megabytes instead in a pinch,
@@ -25,37 +27,31 @@
 max_cache_size_in_mebibytes: 0
 
 server_settings:
-  # The client secret
-  # Keep this secret at all costs :P
-  secret: ina_is_the_cutest
+  # The client secret. Keep this secret at all costs :P
+  secret: suichan wa kyou mo kawaii!
 
-  # The port for the webserver to listen on
-  # 443 is recommended for maximum appeal
-  port: 443
+  # The port for the webserver to listen on. 443 is recommended for max appeal.
+  # port: 443
 
-  # This controls the value the server receives
-  # for your upload speed
+  # This controls the value the server receives for your upload speed.
   external_max_kilobits_per_second: 0
 
   #
-  # Stuff that you probably don't need to change
+  # Advanced settings
   #
 
-  # The external port to broadcast to the backend
-  # Keep this at 0 unless you know what you're doing
-  # 0 means broadcast the same value as `port`
-  external_port: 0
+  # The external hostname to listen on. Keep this at 0.0.0.0 unless you know
+  # what you're doing.
+  # hostname: 0.0.0.0
 
-  # How long to wait for the graceful shutdown (Ctrl-C or SIGINT)
-  # This is rounded to a multiple of 5 seconds
-  graceful_shutdown_wait_seconds: 60
+  # The external port to broadcast to the backend. Keep this at 0 unless you
+  # know what you're doing. 0 means broadcast the same value as `port`.
+  # external_port: 0
 
-  # The external hostname to listen on
-  # Keep this at 0.0.0.0 unless you know what you're doing
-  hostname: 0.0.0.0
+  # How long to wait at most for the graceful shutdown (Ctrl-C or SIGINT).
+  # graceful_shutdown_wait_seconds: 60
 
-  # The external ip to broadcast to the webserver
-  # The default of null means the backend will infer it
-  # from where it was sent from, which may fail in the
-  # presence of multiple IPs
-  external_ip: ~
+  # The external ip to broadcast to the webserver. The default of null (~) means
+  # the backend will infer it from where it was sent from, which may fail in the
+  # presence of multiple IPs.
+  # external_ip: ~

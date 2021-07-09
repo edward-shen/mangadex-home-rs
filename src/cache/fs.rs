@@ -111,21 +111,21 @@ pub(super) async fn read_file(
                 return None;
             }
 
-            let header = if let Some(header) = Header::from_slice(&header_bytes) {
+            let file_header = if let Some(header) = Header::from_slice(&header_bytes) {
                 header
             } else {
                 warn!("Found file, but encrypted header was invalid. Assuming corrupted!");
                 return None;
             };
 
-            let secret_stream = if let Ok(stream) = SecretStream::init_pull(&header, key) {
+            let secret_stream = if let Ok(stream) = SecretStream::init_pull(&file_header, key) {
                 stream
             } else {
                 warn!("Failed to init secret stream with key and header. Assuming corrupted!");
                 return None;
             };
 
-            maybe_header = Some(header);
+            maybe_header = Some(file_header);
 
             reader = Some(Box::pin(EncryptedDiskReader::new(file, secret_stream)));
         }

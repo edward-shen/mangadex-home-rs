@@ -2,8 +2,8 @@ use std::fmt::{Display, Formatter};
 use std::fs::{File, OpenOptions};
 use std::hint::unreachable_unchecked;
 use std::io::{ErrorKind, Write};
-use std::net::{IpAddr, SocketAddr};
-use std::num::{NonZeroU16, NonZeroU64};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::num::NonZeroU16;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -64,7 +64,7 @@ pub fn load_config() -> Result<Config, serde_yaml::Error> {
     Ok(config)
 }
 
-/// Represents a fully parsed config file.
+/// Represents a fully parsed config, from a variety of sources.
 pub struct Config {
     pub cache_type: CacheType,
     pub cache_path: PathBuf,
@@ -75,27 +75,93 @@ pub struct Config {
     pub bind_address: SocketAddr,
     pub external_address: Option<SocketAddr>,
     pub ephemeral_disk_encryption: bool,
-    pub unstable_options: Vec<UnstableOptions>,
     pub network_speed: KilobitsPerSecond,
     pub disk_quota: Mebibytes,
     pub memory_quota: Mebibytes,
+    pub unstable_options: Vec<UnstableOptions>,
     pub override_upstream: Option<Url>,
+    pub enable_metrics: bool,
 }
 
 impl Config {
     fn from_cli_and_file(cli_args: CliArgs, file_args: YamlArgs) -> Self {
+        let file_extended_options = file_args.extended_options.unwrap_or_default();
+
         let log_level = match (cli_args.quiet, cli_args.verbose) {
             (n, _) if n > 2 => LevelFilter::Off,
             (2, _) => LevelFilter::Error,
             (1, _) => LevelFilter::Warn,
             // Use log level from file if no flags were provided to CLI
-            (0, 0) => file_args.extended_options.logging_level,
+            (0, 0) => file_extended_options
+                .logging_level
+                .unwrap_or(LevelFilter::Info),
             (_, 1) => LevelFilter::Debug,
             (_, n) if n > 1 => LevelFilter::Trace,
             // compiler can't figure it out
             _ => unsafe { unreachable_unchecked() },
         };
-        todo!()
+
+        let bind_port = cli_args
+            .port
+            .unwrap_or(file_args.server_settings.port)
+            .get();
+
+        // This needs to be outside because rust isn't smart enough yet to
+        // realize a disjointed borrow of a moved value is ok. This will be
+        // fixed in Rust 2021.
+        let external_port = file_args
+            .server_settings
+            .external_port
+            .map_or(bind_port, Port::get);
+
+        Self {
+            cache_type: cli_args
+                .cache_type
+                .or(file_extended_options.cache_type)
+                .unwrap_or_default(),
+            cache_path: cli_args
+                .cache_path
+                .or(file_extended_options.cache_path)
+                .unwrap_or_else(|| PathBuf::from_str("./cache").unwrap()),
+            shutdown_timeout: file_args
+                .server_settings
+                .graceful_shutdown_wait_seconds
+                .unwrap_or(unsafe { NonZeroU16::new_unchecked(60) }),
+            log_level,
+            // secret should never be in CLI
+            client_secret: file_args.server_settings.secret,
+            port: cli_args.port.unwrap_or(file_args.server_settings.port),
+            bind_address: SocketAddr::new(
+                file_args
+                    .server_settings
+                    .hostname
+                    .unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
+                bind_port,
+            ),
+            external_address: file_args
+                .server_settings
+                .external_ip
+                .map(|ip_addr| SocketAddr::new(ip_addr, external_port)),
+            ephemeral_disk_encryption: cli_args
+                .ephemeral_disk_encryption
+                .or(file_extended_options.ephemeral_disk_encryption)
+                .unwrap_or_default(),
+            network_speed: cli_args
+                .network_speed
+                .unwrap_or(file_args.server_settings.external_max_kilobits_per_second),
+            disk_quota: cli_args
+                .disk_quota
+                .unwrap_or(file_args.max_cache_size_in_mebibytes),
+            memory_quota: cli_args
+                .memory_quota
+                .or(file_extended_options.memory_quota)
+                .unwrap_or_default(),
+            enable_metrics: file_extended_options.enable_metrics.unwrap_or_default(),
+
+            // Unstable options (and related) should never be in yaml config
+            unstable_options: cli_args.unstable_options,
+            override_upstream: cli_args.override_upstream,
+        }
     }
 }
 
@@ -105,13 +171,14 @@ struct YamlArgs {
     max_cache_size_in_mebibytes: Mebibytes,
     server_settings: YamlServerSettings,
     // This implementation custom options
-    extended_options: YamlExtendedOptions,
+    extended_options: Option<YamlExtendedOptions>,
 }
 
 // Naming is legacy
 #[derive(Deserialize)]
 struct YamlServerSettings {
     secret: ClientSecret,
+    #[serde(default)]
     port: Port,
     external_max_kilobits_per_second: KilobitsPerSecond,
     external_port: Option<Port>,
@@ -124,21 +191,14 @@ struct YamlServerSettings {
 #[derive(Deserialize, Serialize)]
 pub struct ClientSecret(String);
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 struct YamlExtendedOptions {
-    memory_quota: Option<NonZeroU64>,
-    #[serde(default)]
-    cache_type: CacheType,
-    #[serde(default)]
-    ephemeral_disk_encryption: bool,
-    #[serde(default)]
-    enable_metrics: bool,
-    #[serde(default = "default_logging_level")]
-    logging_level: LevelFilter,
-}
-
-const fn default_logging_level() -> LevelFilter {
-    LevelFilter::Info
+    memory_quota: Option<Mebibytes>,
+    cache_type: Option<CacheType>,
+    ephemeral_disk_encryption: Option<bool>,
+    enable_metrics: Option<bool>,
+    logging_level: Option<LevelFilter>,
+    cache_path: Option<PathBuf>,
 }
 
 #[derive(Deserialize, Copy, Clone)]
@@ -172,25 +232,25 @@ impl Default for CacheType {
 #[clap(version = crate_version!(), author = crate_authors!(), about = crate_description!())]
 struct CliArgs {
     /// The port to listen on.
-    #[clap(short, long, default_value = "42069")]
-    pub port: Port,
-    /// How large, in bytes, the in-memory cache should be. Note that this does
-    /// not include runtime memory usage.
+    #[clap(short, long)]
+    pub port: Option<Port>,
+    /// How large, in mebibytes, the in-memory cache should be. Note that this
+    /// does not include runtime memory usage.
     #[clap(long)]
-    pub memory_quota: Option<NonZeroU64>,
-    /// How large, in bytes, the on-disk cache should be. Note that actual
+    pub memory_quota: Option<Mebibytes>,
+    /// How large, in mebibytes, the on-disk cache should be. Note that actual
     /// values may be larger for metadata information.
     #[clap(long)]
-    pub disk_quota: u64,
+    pub disk_quota: Option<Mebibytes>,
     /// Sets the location of the disk cache.
-    #[clap(long, default_value = "./cache")]
-    pub cache_path: PathBuf,
+    #[clap(long)]
+    pub cache_path: Option<PathBuf>,
     /// The network speed to advertise to Mangadex@Home control server.
     #[clap(long)]
-    pub network_speed: NonZeroU64,
+    pub network_speed: Option<KilobitsPerSecond>,
     /// Changes verbosity. Default verbosity is INFO, while increasing counts of
     /// verbose flags increases the verbosity to DEBUG and TRACE, respectively.
-    #[clap(short, long, parse(from_occurrences))]
+    #[clap(short, long, parse(from_occurrences), conflicts_with = "quiet")]
     pub verbose: usize,
     /// Changes verbosity. Default verbosity is INFO, while increasing counts of
     /// quiet flags decreases the verbosity to WARN, ERROR, and no logs,
@@ -205,11 +265,11 @@ struct CliArgs {
     /// encrypted with a key generated at runtime. There are implications to
     /// performance, privacy, and usability with this flag enabled.
     #[clap(short, long)]
-    pub ephemeral_disk_encryption: bool,
+    pub ephemeral_disk_encryption: Option<bool>,
     #[clap(short, long)]
     pub config_path: Option<PathBuf>,
-    #[clap(default_value = "on_disk")]
-    pub cache_type: CacheType,
+    #[clap(short, long)]
+    pub cache_type: Option<CacheType>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
