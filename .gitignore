@@ -4,3 +4,4 @@
 flamegraph*.svg
 perf.data*
 dhat.out.*
+settings.yaml
