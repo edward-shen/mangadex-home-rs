@@ -238,7 +238,7 @@ where
     Fut: 'static + Send + Sync + Future<Output = ()>,
     DbCallback: 'static + Send + Sync + FnOnce(u64) -> Fut,
 {
-    let (tx, rx) = channel(WritingStatus::NotDone);
+    let (tx, rx) = channel(WritingStatus::Writing(0));
 
     let file = {
         let mut write_lock = WRITING_STATUS.write().await;
@@ -285,8 +285,8 @@ where
                             bytes.advance(n);
                             bytes_written += n as u64;
 
-                            // We don't care if we don't have receivers
-                            let _ = tx.send(WritingStatus::NotDone);
+                            // We don't really care if we have no receivers
+                            let _ = tx.send(WritingStatus::Writing(n as u64));
                         }
                     }
                 }
@@ -315,9 +315,12 @@ where
             // We don't really care if we have no receivers
             if errored {
                 let _ = tx.send(WritingStatus::Error);
-            } else {
-                let _ = tx.send(WritingStatus::Done(bytes_written));
             }
+            // Explicitly drop it here since we're done with sending values.
+            // This is ok since we have a stream adapter on the other end.
+            // We must drop it here in the critical section, hence the explicit
+            // drop.
+            std::mem::drop(tx);
             write_lock.remove(&path_buf);
         }
 
@@ -434,7 +437,7 @@ pub struct ConcurrentFsStream {
     reader: Pin<Box<dyn AsyncRead + Send>>,
     /// The channel to get updates from. The writer must send its status, else
     /// this reader will never complete.
-    receiver: Pin<Box<WatchStream<WritingStatus>>>,
+    receiver: Option<Pin<Box<WatchStream<WritingStatus>>>>,
     /// The number of bytes the reader has read
     bytes_read: u64,
     /// The number of bytes that the writer has reported it has written. If the
@@ -459,7 +462,7 @@ impl ConcurrentFsStream {
     ) -> Self {
         Self {
             reader: Box::pin(reader),
-            receiver: Box::pin(receiver),
+            receiver: Some(Box::pin(receiver)),
             bytes_read: 0,
             bytes_total: None,
         }
@@ -482,7 +485,28 @@ impl Stream for ConcurrentFsStream {
     type Item = CacheStreamItem;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        // First, try to read from the file...
+        match self.receiver.as_mut().map(|v| v.poll_next_unpin(cx)) {
+            Some(Poll::Ready(Some(WritingStatus::Writing(n)))) => match self.bytes_total.as_mut() {
+                Some(v) => *v = unsafe { NonZeroU64::new_unchecked(v.get() + n) },
+                None => self.bytes_total = unsafe { Some(NonZeroU64::new_unchecked(n)) },
+            },
+            Some(Poll::Ready(Some(WritingStatus::Error))) => {
+                // Upstream errored, abort reading
+                return Poll::Ready(Some(Err(UpstreamError)));
+            }
+            Some(Poll::Ready(None)) => {
+                // Take the receiver so that we can't poll it again
+                self.receiver.take();
+            }
+            Some(Poll::Pending) | None => (),
+        }
+
+        // We are entirely done if the bytes total equals the bytes read
+        if Some(self.bytes_read) == self.bytes_total.map(NonZeroU64::get) {
+            return Poll::Ready(None);
+        }
+
+        // We're not done, so try reading from the file.
 
         // TODO: Might be more efficient to have a larger buffer
         let mut bytes = [0; 4 * 1024].to_vec();
@@ -498,33 +522,9 @@ impl Stream for ConcurrentFsStream {
 
         let filled = buffer.filled().len();
         if filled == 0 {
-            // Filled is zero, which indicates two situations:
-            // 1. We are actually done.
-            // 2. We read to the EOF while the writer is still writing to it.
-
-            // To handle the second case, we need to see the status of the
-            // writer, and if it's done writing yet.
-
-            if let Poll::Ready(Some(WritingStatus::Done(n))) =
-                self.receiver.as_mut().poll_next_unpin(cx)
-            {
-                self.bytes_total = Some(NonZeroU64::new(n).expect("Stored a 0 byte image?"))
-            }
-
-            // Okay, now we know if we've read enough bytes or not. If the
-            // writer hasn't told use that it's done yet, then we know that
-            // there must be more bytes to read from.
-
-            if let Some(bytes_total) = self.bytes_total {
-                if bytes_total.get() == self.bytes_read {
-                    // We matched the number of bytes the writer said it wrote,
-                    // so we're finally done
-                    return Poll::Ready(None);
-                }
-            }
-
-            // We haven't read enough bytes, so just return an empty bytes and
-            // have the executor request some bytes some time in the future.
+            // We haven't read enough bytes, but we know there's more to read,
+            // so just return an empty bytes and have the executor request some
+            // bytes some time in the future.
             //
             // This case might be solved by io_uring, but for now this is this
             // the best we can do.
@@ -547,8 +547,7 @@ impl From<UpstreamError> for actix_web::Error {
 
 #[derive(Debug, Clone, Copy)]
 enum WritingStatus {
-    NotDone,
-    Done(u64),
+    Writing(u64),
     Error,
 }
 
