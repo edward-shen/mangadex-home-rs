@@ -34,7 +34,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         let mut path = PathBuf::from_str(&project_root)?;
         path.push(".env");
 
-        let mut file = std::fs::OpenOptions::new().append(true).open(path)?;
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(path)?;
         file.write_all(b"\nDATABASE_URL=sqlite:./cache/metadata.sqlite\n")?;
         file.sync_all()?;
     }
