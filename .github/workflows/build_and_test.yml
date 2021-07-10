@@ -3,14 +3,14 @@ name: Build and test
 on:
   push:
     branches: [ master ]
-    &paths paths-ignore:
+    paths-ignore: &paths
     - "docs/**"
     - "settings.sample.yaml"
     - "README.md"
     - "LICENSE"
   pull_request:
     branches: [ master ]
-    *paths
+    paths-ignore: *paths
 
 env:
   CARGO_TERM_COLOR: always
