@@ -155,10 +155,10 @@ impl Config {
                 .server_settings
                 .external_ip
                 .map(|ip_addr| SocketAddr::new(ip_addr, external_port)),
-            ephemeral_disk_encryption: cli_args
-                .ephemeral_disk_encryption
-                .or(file_extended_options.ephemeral_disk_encryption)
-                .unwrap_or_default(),
+            ephemeral_disk_encryption: cli_args.ephemeral_disk_encryption
+                || file_extended_options
+                    .ephemeral_disk_encryption
+                    .unwrap_or_default(),
             network_speed: cli_args
                 .network_speed
                 .unwrap_or(file_args.server_settings.external_max_kilobits_per_second),
@@ -284,7 +284,7 @@ struct CliArgs {
     /// encrypted with a key generated at runtime. There are implications to
     /// performance, privacy, and usability with this flag enabled.
     #[clap(short, long)]
-    pub ephemeral_disk_encryption: Option<bool>,
+    pub ephemeral_disk_encryption: bool,
     #[clap(short, long)]
     pub config_path: Option<PathBuf>,
     #[clap(short = 't', long)]

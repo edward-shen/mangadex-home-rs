@@ -30,6 +30,7 @@ use crate::config::{CacheType, UnstableOptions, OFFLINE_MODE};
 use crate::state::DynamicServerCert;
 
 mod cache;
+mod client;
 mod config;
 mod metrics;
 mod ping;

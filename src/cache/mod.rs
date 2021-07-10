@@ -9,7 +9,6 @@ use actix_web::http::HeaderValue;
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
 use chrono::{DateTime, FixedOffset};
-use fs::ConcurrentFsStream;
 use futures::{Stream, StreamExt};
 use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
@@ -148,8 +147,6 @@ impl ImageMetadata {
     }
 }
 
-type BoxedImageStream = Box<dyn Stream<Item = Result<Bytes, CacheError>> + Unpin + Send>;
-
 #[derive(Error, Debug)]
 pub enum CacheError {
     #[error(transparent)]
@@ -170,9 +167,9 @@ pub trait Cache: Send + Sync {
     async fn put(
         &self,
         key: CacheKey,
-        image: BoxedImageStream,
+        image: Bytes,
         metadata: ImageMetadata,
-    ) -> Result<CacheStream, CacheError>;
+    ) -> Result<(), CacheError>;
 }
 
 #[async_trait]
@@ -189,9 +186,9 @@ impl<T: Cache> Cache for Arc<T> {
     async fn put(
         &self,
         key: CacheKey,
-        image: BoxedImageStream,
+        image: Bytes,
         metadata: ImageMetadata,
-    ) -> Result<CacheStream, CacheError> {
+    ) -> Result<(), CacheError> {
         self.as_ref().put(key, image, metadata).await
     }
 }
@@ -201,10 +198,10 @@ pub trait CallbackCache: Cache {
     async fn put_with_on_completed_callback(
         &self,
         key: CacheKey,
-        image: BoxedImageStream,
+        image: Bytes,
         metadata: ImageMetadata,
         on_complete: Sender<(CacheKey, Bytes, ImageMetadata, u64)>,
-    ) -> Result<CacheStream, CacheError>;
+    ) -> Result<(), CacheError>;
 }
 
 #[async_trait]
@@ -213,10 +210,10 @@ impl<T: CallbackCache> CallbackCache for Arc<T> {
     async fn put_with_on_completed_callback(
         &self,
         key: CacheKey,
-        image: BoxedImageStream,
+        image: Bytes,
         metadata: ImageMetadata,
         on_complete: Sender<(CacheKey, Bytes, ImageMetadata, u64)>,
-    ) -> Result<CacheStream, CacheError> {
+    ) -> Result<(), CacheError> {
         self.as_ref()
             .put_with_on_completed_callback(key, image, metadata, on_complete)
             .await
@@ -233,7 +230,11 @@ impl CacheStream {
         Ok(Self {
             inner,
             decrypt: header
-                .and_then(|header| ENCRYPTION_KEY.get().map(|key| SecretStream::init_pull(&header, key)))
+                .and_then(|header| {
+                    ENCRYPTION_KEY
+                        .get()
+                        .map(|key| SecretStream::init_pull(&header, key))
+                })
                 .transpose()?,
         })
     }
@@ -263,7 +264,6 @@ impl Stream for CacheStream {
 }
 
 pub(self) enum InnerStream {
-    Concurrent(ConcurrentFsStream),
     Memory(MemStream),
     Completed(FramedRead<Pin<Box<dyn AsyncRead + Send>>, BytesCodec>),
 }
@@ -281,7 +281,6 @@ impl Stream for InnerStream {
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match self.get_mut() {
-            Self::Concurrent(stream) => stream.poll_next_unpin(cx),
             Self::Memory(stream) => stream.poll_next_unpin(cx),
             Self::Completed(stream) => stream
                 .poll_next_unpin(cx)

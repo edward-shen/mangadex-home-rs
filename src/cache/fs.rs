@@ -14,60 +14,32 @@
 //! upstream no longer needs to process duplicate requests and sequential cache
 //! misses are treated as closer as a cache hit.
 
-use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::Display;
-use std::io::SeekFrom;
-use std::num::NonZeroU64;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
 use actix_web::error::PayloadError;
-use bytes::{Buf, Bytes, BytesMut};
-use futures::{Future, Stream, StreamExt};
+use bytes::Bytes;
+use futures::Future;
 use log::{debug, warn};
-use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use sodiumoxide::crypto::secretstream::{
     Header, Pull, Push, Stream as SecretStream, Tag, HEADERBYTES,
 };
 use tokio::fs::{create_dir_all, remove_file, File};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, ReadBuf};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::sync::mpsc::Sender;
-use tokio::sync::watch::{channel, Receiver};
-use tokio::sync::RwLock;
-use tokio_stream::wrappers::WatchStream;
 use tokio_util::codec::{BytesCodec, FramedRead};
 
-use super::{
-    BoxedImageStream, CacheKey, CacheStreamItem, ImageMetadata, InnerStream, ENCRYPTION_KEY,
-};
+use super::{CacheKey, ImageMetadata, InnerStream, ENCRYPTION_KEY};
 
 #[derive(Serialize, Deserialize)]
 pub enum OnDiskMetadata {
     Encrypted(Header, ImageMetadata),
     Plaintext(ImageMetadata),
 }
-
-/// Keeps track of files that are currently being written to.
-///
-/// Why is this necessary? Consider the following situation:
-///
-/// Client A requests file `foo.png`. We construct a transparent file stream,
-/// and now the file is being streamed into and from.
-///
-/// Client B requests the same file `foo.png`. A naive implementation would
-/// attempt to either read directly the file as it sees the file existing. This
-/// is problematic as the file could still be written to. If Client B catches
-/// up to Client A's request, then Client B could receive a broken image, as it
-/// thinks it's done reading the file.
-///
-/// We effectively use `WRITING_STATUS` as a status relay to ensure concurrent
-/// reads to the file while it's being written to will wait for writing to be
-/// completed.
-static WRITING_STATUS: Lazy<RwLock<HashMap<PathBuf, Receiver<WritingStatus>>>> =
-    Lazy::new(|| RwLock::new(HashMap::new()));
 
 /// Attempts to lookup the file on disk, returning a byte stream if it exists.
 /// Note that this could return two types of streams, depending on if the file
@@ -100,7 +72,7 @@ pub(super) async fn read_file(
         let mut file = File::from_std(file_0);
         let file_0 = file.try_clone().await.unwrap();
 
-        // image is decrypted or corrupt
+        // image is encrypted or corrupt
 
         // If the encryption key was set, use the encrypted disk reader instead;
         // else, just directly read from file.
@@ -142,20 +114,7 @@ pub(super) async fn read_file(
     // successfully decoded the data; otherwise the file is garbage.
 
     if let Some(reader) = reader {
-        // False positive lint, `file` is used in both cases, which means that it's
-        // not possible to move this into a map_or_else without cloning `file`.
-        #[allow(clippy::option_if_let_else)]
-        let stream = if let Some(status) = WRITING_STATUS.read().await.get(path).map(Clone::clone) {
-            debug!("Got an in-progress stream");
-            InnerStream::Concurrent(ConcurrentFsStream::from_reader(
-                reader,
-                WatchStream::new(status),
-            ))
-        } else {
-            debug!("Got a completed stream");
-            InnerStream::Completed(FramedRead::new(reader, BytesCodec::new()))
-        };
-
+        let stream = InnerStream::Completed(FramedRead::new(reader, BytesCodec::new()));
         parsed_metadata.map(|metadata| Ok((stream, maybe_header, metadata)))
     } else {
         debug!("Reader was invalid, file is corrupt");
@@ -229,23 +188,19 @@ impl AsyncRead for EncryptedDiskReader {
 pub(super) async fn write_file<Fut, DbCallback>(
     path: &Path,
     cache_key: CacheKey,
-    mut byte_stream: BoxedImageStream,
+    bytes: Bytes,
     metadata: ImageMetadata,
     db_callback: DbCallback,
     on_complete: Option<Sender<(CacheKey, Bytes, ImageMetadata, u64)>>,
-) -> Result<(InnerStream, Option<Header>), std::io::Error>
+) -> Result<(), std::io::Error>
 where
     Fut: 'static + Send + Sync + Future<Output = ()>,
     DbCallback: 'static + Send + Sync + FnOnce(u64) -> Fut,
 {
-    let (tx, rx) = channel(WritingStatus::Writing(0));
-
     let file = {
-        let mut write_lock = WRITING_STATUS.write().await;
         let parent = path.parent().expect("The path to have a parent");
         create_dir_all(parent).await?;
         let file = File::create(path).await?; // we need to make sure the file exists and is truncated.
-        write_lock.insert(path.to_path_buf(), rx.clone());
         file
     };
 
@@ -262,88 +217,43 @@ where
             (Box::pin(file), None)
         };
 
-    // need owned variant because async lifetime
-    let path_buf = path.to_path_buf();
-    tokio::spawn(async move {
-        let path_buf = path_buf; // moves path buf into async
-        let mut errored = false;
-        let mut bytes_written: u64 = 0;
-        let mut acc_bytes = BytesMut::new();
-        let accumulate = on_complete.is_some();
-        writer.write_all(metadata_string.as_bytes()).await?;
+    let mut error = if let Some(header) = maybe_header {
+        writer.write_all(header.as_ref()).await.err()
+    } else {
+        None
+    };
 
-        while let Some(bytes) = byte_stream.next().await {
-            if let Ok(mut bytes) = bytes {
-                if accumulate {
-                    acc_bytes.extend(&bytes);
-                }
+    if error.is_none() {
+        error = writer.write_all(metadata_string.as_bytes()).await.err();
+    }
+    if error.is_none() {
+        error = error.or(writer.write_all(&bytes).await.err());
+    }
 
-                loop {
-                    match writer.write(&bytes).await? {
-                        0 => break,
-                        n => {
-                            bytes.advance(n);
-                            bytes_written += n as u64;
+    if let Some(e) = error {
+        // It's ok if the deleting the file fails, since we truncate on
+        // create anyways, but it should be best effort.
+        //
+        // We don't care about the result of the call.
+        std::mem::drop(remove_file(path).await);
+        return Err(e);
+    }
 
-                            // We don't really care if we have no receivers
-                            let _ = tx.send(WritingStatus::Writing(n as u64));
-                        }
-                    }
-                }
-            } else {
-                errored = true;
-                break;
-            }
-        }
+    writer.flush().await?;
+    debug!("writing to file done");
 
-        if errored {
-            // It's ok if the deleting the file fails, since we truncate on
-            // create anyways, but it should be best effort.
-            //
-            // We don't care about the result of the call.
-            std::mem::drop(remove_file(&path_buf).await);
-        } else {
-            writer.flush().await?;
-            debug!("writing to file done");
-        }
+    let bytes_written = (metadata_size + bytes.len()) as u64;
+    tokio::spawn(db_callback(bytes_written));
 
-        {
-            let mut write_lock = WRITING_STATUS.write().await;
-            // This needs to be written atomically with the write lock, else
-            // it's possible we have an inconsistent state
-            //
-            // We don't really care if we have no receivers
-            if errored {
-                let _ = tx.send(WritingStatus::Error);
-            }
-            // Explicitly drop it here since we're done with sending values.
-            // This is ok since we have a stream adapter on the other end.
-            // We must drop it here in the critical section, hence the explicit
-            // drop.
-            std::mem::drop(tx);
-            write_lock.remove(&path_buf);
-        }
+    if let Some(sender) = on_complete {
+        tokio::spawn(async move {
+            sender
+                .send((cache_key, bytes, metadata, bytes_written))
+                .await
+        });
+    }
 
-        tokio::spawn(db_callback(bytes_written));
-
-        if let Some(sender) = on_complete {
-            tokio::spawn(async move {
-                sender
-                    .send((cache_key, acc_bytes.freeze(), metadata, bytes_written))
-                    .await
-            });
-        }
-
-        // We don't ever check this, so the return value doesn't matter
-        Ok::<_, std::io::Error>(())
-    });
-
-    Ok((
-        InnerStream::Concurrent(
-            ConcurrentFsStream::new(path, metadata_size, WatchStream::new(rx)).await?,
-        ),
-        maybe_header,
-    ))
+    Ok(())
 }
 
 struct EncryptedDiskWriter {
@@ -432,43 +342,6 @@ impl AsyncWrite for EncryptedDiskWriter {
     }
 }
 
-pub struct ConcurrentFsStream {
-    /// The File to read from
-    reader: Pin<Box<dyn AsyncRead + Send>>,
-    /// The channel to get updates from. The writer must send its status, else
-    /// this reader will never complete.
-    receiver: Option<Pin<Box<WatchStream<WritingStatus>>>>,
-    /// The number of bytes the reader has read
-    bytes_read: u64,
-    /// The number of bytes that the writer has reported it has written. If the
-    /// writer has not reported yet, this value is None.
-    bytes_total: Option<NonZeroU64>,
-}
-
-impl ConcurrentFsStream {
-    async fn new(
-        path: &Path,
-        seek: usize,
-        receiver: WatchStream<WritingStatus>,
-    ) -> Result<Self, std::io::Error> {
-        let mut file = File::open(path).await?;
-        file.seek(SeekFrom::Start(seek as u64)).await?;
-        Ok(Self::from_reader(Box::pin(file), receiver))
-    }
-
-    fn from_reader(
-        reader: Pin<Box<dyn AsyncRead + Send>>,
-        receiver: WatchStream<WritingStatus>,
-    ) -> Self {
-        Self {
-            reader: Box::pin(reader),
-            receiver: Some(Box::pin(receiver)),
-            bytes_read: 0,
-            bytes_total: None,
-        }
-    }
-}
-
 /// Represents some upstream error.
 #[derive(Debug)]
 pub struct UpstreamError;
@@ -481,78 +354,9 @@ impl Display for UpstreamError {
     }
 }
 
-impl Stream for ConcurrentFsStream {
-    type Item = CacheStreamItem;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        match self.receiver.as_mut().map(|v| v.poll_next_unpin(cx)) {
-            Some(Poll::Ready(Some(WritingStatus::Writing(n)))) => match self.bytes_total.as_mut() {
-                Some(v) => *v = unsafe { NonZeroU64::new_unchecked(v.get() + n) },
-                None => self.bytes_total = unsafe { Some(NonZeroU64::new_unchecked(n)) },
-            },
-            Some(Poll::Ready(Some(WritingStatus::Error))) => {
-                // Upstream errored, abort reading
-                return Poll::Ready(Some(Err(UpstreamError)));
-            }
-            Some(Poll::Ready(None)) => {
-                // Take the receiver so that we can't poll it again
-                self.receiver.take();
-            }
-            Some(Poll::Pending) | None => (),
-        }
-
-        // We are entirely done if the bytes total equals the bytes read
-        if Some(self.bytes_read) == self.bytes_total.map(NonZeroU64::get) {
-            return Poll::Ready(None);
-        }
-
-        // We're not done, so try reading from the file.
-
-        // TODO: Might be more efficient to have a larger buffer
-        let mut bytes = [0; 4 * 1024].to_vec();
-        let mut buffer = ReadBuf::new(&mut bytes);
-        match self.reader.as_mut().poll_read(cx, &mut buffer) {
-            Poll::Ready(Ok(_)) => (),
-            Poll::Ready(Err(_)) => return Poll::Ready(Some(Err(UpstreamError))),
-            Poll::Pending => return Poll::Pending,
-        }
-
-        // At this point, we know that we "successfully" read some amount of
-        // data. Let's see if there's actual data in there...
-
-        let filled = buffer.filled().len();
-        if filled == 0 {
-            // We haven't read enough bytes, but we know there's more to read,
-            // so just return an empty bytes and have the executor request some
-            // bytes some time in the future.
-            //
-            // This case might be solved by io_uring, but for now this is this
-            // the best we can do.
-            Poll::Ready(Some(Ok(Bytes::new())))
-        } else {
-            // We have data! Give it to the reader!
-            self.bytes_read += filled as u64;
-            bytes.truncate(filled);
-            Poll::Ready(Some(Ok(bytes.into())))
-        }
-    }
-}
-
 impl From<UpstreamError> for actix_web::Error {
     #[inline]
     fn from(_: UpstreamError) -> Self {
         PayloadError::Incomplete(None).into()
     }
-}
-
-#[derive(Debug, Clone, Copy)]
-enum WritingStatus {
-    Writing(u64),
-    Error,
-}
-
-#[cfg(test)]
-mod storage {
-    #[test]
-    fn wut() {}
 }

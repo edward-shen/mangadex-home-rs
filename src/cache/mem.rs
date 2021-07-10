@@ -2,8 +2,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use super::{
-    BoxedImageStream, Cache, CacheError, CacheKey, CacheStream, CallbackCache, ImageMetadata,
-    InnerStream, MemStream,
+    Cache, CacheError, CacheKey, CacheStream, CallbackCache, ImageMetadata, InnerStream, MemStream,
 };
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -164,9 +163,9 @@ where
     async fn put(
         &self,
         key: CacheKey,
-        image: BoxedImageStream,
+        image: Bytes,
         metadata: ImageMetadata,
-    ) -> Result<CacheStream, super::CacheError> {
+    ) -> Result<(), super::CacheError> {
         self.inner
             .put_with_on_completed_callback(key, image, metadata, self.master_sender.clone())
             .await

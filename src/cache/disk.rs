@@ -16,9 +16,7 @@ use tokio_stream::wrappers::ReceiverStream;
 
 use crate::units::Bytes;
 
-use super::{
-    BoxedImageStream, Cache, CacheError, CacheKey, CacheStream, CallbackCache, ImageMetadata,
-};
+use super::{Cache, CacheError, CacheKey, CacheStream, CallbackCache, ImageMetadata};
 
 pub struct DiskCache {
     disk_path: PathBuf,
@@ -210,9 +208,9 @@ impl Cache for DiskCache {
     async fn put(
         &self,
         key: CacheKey,
-        image: BoxedImageStream,
+        image: bytes::Bytes,
         metadata: ImageMetadata,
-    ) -> Result<CacheStream, CacheError> {
+    ) -> Result<(), CacheError> {
         let channel = self.db_update_channel_sender.clone();
 
         let path = Arc::new(self.disk_path.clone().join(PathBuf::from(&key)));
@@ -225,9 +223,6 @@ impl Cache for DiskCache {
         super::fs::write_file(&path, key, image, metadata, db_callback, None)
             .await
             .map_err(CacheError::from)
-            .and_then(|(inner, maybe_header)| {
-                CacheStream::new(inner, maybe_header).map_err(|_| CacheError::DecryptionFailure)
-            })
     }
 }
 
@@ -236,10 +231,10 @@ impl CallbackCache for DiskCache {
     async fn put_with_on_completed_callback(
         &self,
         key: CacheKey,
-        image: BoxedImageStream,
+        image: bytes::Bytes,
         metadata: ImageMetadata,
         on_complete: Sender<(CacheKey, bytes::Bytes, ImageMetadata, u64)>,
-    ) -> Result<CacheStream, CacheError> {
+    ) -> Result<(), CacheError> {
         let channel = self.db_update_channel_sender.clone();
 
         let path = Arc::new(self.disk_path.clone().join(PathBuf::from(&key)));
@@ -253,8 +248,5 @@ impl CallbackCache for DiskCache {
         super::fs::write_file(&path, key, image, metadata, db_callback, Some(on_complete))
             .await
             .map_err(CacheError::from)
-            .and_then(|(inner, maybe_header)| {
-                CacheStream::new(inner, maybe_header).map_err(|_| CacheError::DecryptionFailure)
-            })
     }
 }

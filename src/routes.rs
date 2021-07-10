@@ -1,5 +1,4 @@
 use std::sync::atomic::Ordering;
-use std::time::Duration;
 
 use actix_web::error::ErrorNotFound;
 use actix_web::http::header::{
@@ -12,16 +11,15 @@ use actix_web::{get, web::Data, HttpRequest, HttpResponse, Responder};
 use base64::DecodeError;
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
-use futures::{Stream, TryStreamExt};
-use log::{debug, error, info, trace, warn};
-use once_cell::sync::Lazy;
+use futures::Stream;
+use log::{debug, error, info, trace};
 use prometheus::{Encoder, TextEncoder};
-use reqwest::{Client, StatusCode};
 use serde::Deserialize;
 use sodiumoxide::crypto::box_::{open_precomputed, Nonce, PrecomputedKey, NONCEBYTES};
 use thiserror::Error;
 
 use crate::cache::{Cache, CacheKey, ImageMetadata, UpstreamError};
+use crate::client::{FetchResult, HTTP_CLIENT};
 use crate::config::{OFFLINE_MODE, VALIDATE_TOKENS};
 use crate::metrics::{
     CACHE_HIT_COUNTER, CACHE_MISS_COUNTER, REQUESTS_DATA_COUNTER, REQUESTS_DATA_SAVER_COUNTER,
@@ -31,16 +29,7 @@ use crate::state::RwLockServerState;
 
 const BASE64_CONFIG: base64::Config = base64::Config::new(base64::CharacterSet::UrlSafe, false);
 
-static HTTP_CLIENT: Lazy<Client> = Lazy::new(|| {
-    Client::builder()
-        .pool_idle_timeout(Duration::from_secs(180))
-        .https_only(true)
-        .http2_prior_knowledge()
-        .build()
-        .expect("Client initialization to work")
-});
-
-enum ServerResponse {
+pub enum ServerResponse {
     TokenValidationError(TokenValidationError),
     HttpResponse(HttpResponse),
 }
@@ -116,7 +105,7 @@ pub async fn default(state: Data<RwLockServerState>, req: HttpRequest) -> impl R
 
     info!("Got unknown path, just proxying: {}", path);
 
-    let resp = match HTTP_CLIENT.get(path).send().await {
+    let resp = match HTTP_CLIENT.inner().get(path).send().await {
         Ok(resp) => resp,
         Err(e) => {
             error!("{}", e);
@@ -145,7 +134,7 @@ pub async fn metrics() -> impl Responder {
 }
 
 #[derive(Error, Debug)]
-enum TokenValidationError {
+pub enum TokenValidationError {
     #[error("Failed to decode base64 token.")]
     DecodeError(#[from] DecodeError),
     #[error("Nonce was too short.")]
@@ -208,7 +197,7 @@ fn validate_token(
 }
 
 #[inline]
-fn push_headers(builder: &mut HttpResponseBuilder) -> &mut HttpResponseBuilder {
+pub fn push_headers(builder: &mut HttpResponseBuilder) -> &mut HttpResponseBuilder {
     builder
         .insert_header((X_CONTENT_TYPE_OPTIONS, "nosniff"))
         .insert_header((ACCESS_CONTROL_ALLOW_ORIGIN, "https://mangadex.org"))
@@ -237,7 +226,7 @@ async fn fetch_image(
         Some(Err(_)) => {
             return ServerResponse::HttpResponse(HttpResponse::BadGateway().finish());
         }
-        _ => (),
+        None => (),
     }
 
     CACHE_MISS_COUNTER.inc();
@@ -249,95 +238,35 @@ async fn fetch_image(
         );
     }
 
-    // It's important to not get a write lock before this request, else we're
-    // holding the read lock until the await resolves.
-
-    let resp = if is_data_saver {
-        HTTP_CLIENT
-            .get(format!(
-                "{}/data-saver/{}/{}",
-                state.0.read().image_server,
-                &key.0,
-                &key.1
-            ))
-            .send()
+    let url = if is_data_saver {
+        format!(
+            "{}/data-saver/{}/{}",
+            state.0.read().image_server,
+            &key.0,
+            &key.1,
+        )
     } else {
-        HTTP_CLIENT
-            .get(format!(
-                "{}/data/{}/{}",
-                state.0.read().image_server,
-                &key.0,
-                &key.1
-            ))
-            .send()
-    }
-    .await;
+        format!("{}/data/{}/{}", state.0.read().image_server, &key.0, &key.1)
+    };
 
-    match resp {
-        Ok(mut resp) => {
-            let content_type = resp.headers().get(CONTENT_TYPE);
-
-            let is_image = content_type
-                .map(|v| String::from_utf8_lossy(v.as_ref()).contains("image/"))
-                .unwrap_or_default();
-
-            if resp.status() != StatusCode::OK || !is_image {
-                warn!(
-                    "Got non-OK or non-image response code from upstream, proxying and not caching result.",
-                );
-
-                let mut resp_builder = HttpResponseBuilder::new(resp.status());
-                if let Some(content_type) = content_type {
-                    resp_builder.insert_header((CONTENT_TYPE, content_type));
-                }
-
-                push_headers(&mut resp_builder);
-
-                return ServerResponse::HttpResponse(
-                    resp_builder.body(resp.bytes().await.unwrap_or_default()),
-                );
-            }
-
-            let (content_type, length, last_mod) = {
-                let headers = resp.headers_mut();
-                (
-                    headers.remove(CONTENT_TYPE),
-                    headers.remove(CONTENT_LENGTH),
-                    headers.remove(LAST_MODIFIED),
-                )
-            };
-
-            let body = resp.bytes_stream().map_err(|e| e.into());
-
-            debug!("Inserting into cache");
-
-            let metadata = ImageMetadata::new(content_type, length, last_mod).unwrap();
-            let stream = {
-                match cache.put(key, Box::new(body), metadata).await {
-                    Ok(stream) => stream,
-                    Err(e) => {
-                        warn!("Failed to insert into cache: {}", e);
-                        return ServerResponse::HttpResponse(
-                            HttpResponse::InternalServerError().finish(),
-                        );
-                    }
-                }
-            };
-
-            debug!("Done putting into cache");
-
-            construct_response(stream, &metadata)
+    match HTTP_CLIENT.fetch_and_cache(url, key, cache).await {
+        FetchResult::ServiceUnavailable => {
+            ServerResponse::HttpResponse(HttpResponse::ServiceUnavailable().finish())
         }
-        Err(e) => {
-            error!("Failed to fetch image from server: {}", e);
-            ServerResponse::HttpResponse(
-                push_headers(&mut HttpResponse::ServiceUnavailable()).finish(),
-            )
+        FetchResult::InternalServerError => {
+            ServerResponse::HttpResponse(HttpResponse::InternalServerError().finish())
         }
+        FetchResult::Data(status, headers, data) => {
+            let mut resp = HttpResponseBuilder::new(status);
+            let mut resp = resp.body(data);
+            *resp.headers_mut() = headers;
+            ServerResponse::HttpResponse(resp)
+        }
+        FetchResult::Processing => panic!("Race condition found with fetch result"),
     }
 }
 
-fn construct_response(
+pub fn construct_response(
     data: impl Stream<Item = Result<Bytes, UpstreamError>> + Unpin + 'static,
     metadata: &ImageMetadata,
 ) -> ServerResponse {
