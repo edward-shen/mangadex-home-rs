@@ -32,6 +32,25 @@ pub static HTTP_CLIENT: Lazy<CachingClient> = Lazy::new(|| CachingClient {
     locks: RwLock::new(HashMap::new()),
 });
 
+static DEFAULT_HEADERS: Lazy<HeaderMap> = Lazy::new(|| {
+    let mut headers = HeaderMap::with_capacity(8);
+    headers.insert(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
+    headers.insert(
+        ACCESS_CONTROL_ALLOW_ORIGIN,
+        HeaderValue::from_static("https://mangadex.org"),
+    );
+    headers.insert(ACCESS_CONTROL_EXPOSE_HEADERS, HeaderValue::from_static("*"));
+    headers.insert(
+        CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=1209600"),
+    );
+    headers.insert(
+        HeaderName::from_static("timing-allow-origin"),
+        HeaderValue::from_static("https://mangadex.org"),
+    );
+    headers
+});
+
 pub struct CachingClient {
     inner: Client,
     locks: RwLock<HashMap<String, Receiver<FetchResult>>>,
@@ -88,27 +107,11 @@ impl CachingClient {
                     if resp.status() != StatusCode::OK || !is_image {
                         warn!("Got non-OK or non-image response code from upstream, proxying and not caching result.");
 
-                        let mut headers = HeaderMap::new();
+                        let mut headers = DEFAULT_HEADERS.clone();
 
                         if let Some(content_type) = content_type {
                             headers.insert(CONTENT_TYPE, content_type.clone());
                         }
-
-                        headers.insert(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
-                        headers.insert(
-                            ACCESS_CONTROL_ALLOW_ORIGIN,
-                            HeaderValue::from_static("https://mangadex.org"),
-                        );
-                        headers
-                            .insert(ACCESS_CONTROL_EXPOSE_HEADERS, HeaderValue::from_static("*"));
-                        headers.insert(
-                            CACHE_CONTROL,
-                            HeaderValue::from_static("public, max-age=1209600"),
-                        );
-                        headers.insert(
-                            HeaderName::from_static("timing-allow-origin"),
-                            HeaderValue::from_static("https://mangadex.org"),
-                        );
 
                         FetchResult::Data(
                             resp.status(),
@@ -140,7 +143,7 @@ impl CachingClient {
                             Ok(()) => {
                                 debug!("Done putting into cache");
 
-                                let mut headers = HeaderMap::new();
+                                let mut headers = DEFAULT_HEADERS.clone();
                                 if let Some(content_type) = content_type {
                                     headers.insert(CONTENT_TYPE, content_type);
                                 }
@@ -153,26 +156,6 @@ impl CachingClient {
                                     headers.insert(LAST_MODIFIED, last_modified);
                                 }
 
-                                headers.insert(
-                                    X_CONTENT_TYPE_OPTIONS,
-                                    HeaderValue::from_static("nosniff"),
-                                );
-                                headers.insert(
-                                    ACCESS_CONTROL_ALLOW_ORIGIN,
-                                    HeaderValue::from_static("https://mangadex.org"),
-                                );
-                                headers.insert(
-                                    ACCESS_CONTROL_EXPOSE_HEADERS,
-                                    HeaderValue::from_static("*"),
-                                );
-                                headers.insert(
-                                    CACHE_CONTROL,
-                                    HeaderValue::from_static("public, max-age=1209600"),
-                                );
-                                headers.insert(
-                                    HeaderName::from_static("timing-allow-origin"),
-                                    HeaderValue::from_static("https://mangadex.org"),
-                                );
                                 FetchResult::Data(StatusCode::OK, headers, body)
                             }
                             Err(e) => {
