@@ -21,8 +21,7 @@
 #
 # Default values are commented out.
 
-# The size in mebibytes of the cache
-# You can use megabytes instead in a pinch,
+# The size in mebibytes of the cache You can use megabytes instead in a pinch,
 # but just know the two are **NOT** the same.
 max_cache_size_in_mebibytes: 0
 
@@ -34,7 +33,7 @@ server_settings:
   # port: 443
 
   # This controls the value the server receives for your upload speed.
-  external_max_kilobits_per_second: 0
+  external_max_kilobits_per_second: 1
 
   #
   # Advanced settings

@@ -178,28 +178,6 @@ impl Config {
     }
 }
 
-#[derive(Deserialize)]
-struct YamlArgs {
-    // Naming is legacy
-    max_cache_size_in_mebibytes: Mebibytes,
-    server_settings: YamlServerSettings,
-    // This implementation custom options
-    extended_options: Option<YamlExtendedOptions>,
-}
-
-// Naming is legacy
-#[derive(Deserialize)]
-struct YamlServerSettings {
-    secret: ClientSecret,
-    #[serde(default)]
-    port: Port,
-    external_max_kilobits_per_second: KilobitsPerSecond,
-    external_port: Option<Port>,
-    graceful_shutdown_wait_seconds: Option<NonZeroU16>,
-    hostname: Option<IpAddr>,
-    external_ip: Option<IpAddr>,
-}
-
 // this intentionally does not implement display
 #[derive(Deserialize, Serialize, Clone)]
 pub struct ClientSecret(String);
@@ -208,16 +186,6 @@ impl std::fmt::Debug for ClientSecret {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "[client secret]")
     }
-}
-
-#[derive(Deserialize, Default)]
-struct YamlExtendedOptions {
-    memory_quota: Option<Mebibytes>,
-    cache_type: Option<CacheType>,
-    ephemeral_disk_encryption: Option<bool>,
-    enable_metrics: Option<bool>,
-    logging_level: Option<LevelFilter>,
-    cache_path: Option<PathBuf>,
 }
 
 #[derive(Deserialize, Copy, Clone, Debug)]
@@ -245,6 +213,38 @@ impl Default for CacheType {
     fn default() -> Self {
         Self::OnDisk
     }
+}
+
+#[derive(Deserialize)]
+struct YamlArgs {
+    // Naming is legacy
+    max_cache_size_in_mebibytes: Mebibytes,
+    server_settings: YamlServerSettings,
+    // This implementation custom options
+    extended_options: Option<YamlExtendedOptions>,
+}
+
+// Naming is legacy
+#[derive(Deserialize)]
+struct YamlServerSettings {
+    secret: ClientSecret,
+    #[serde(default)]
+    port: Port,
+    external_max_kilobits_per_second: KilobitsPerSecond,
+    external_port: Option<Port>,
+    graceful_shutdown_wait_seconds: Option<NonZeroU16>,
+    hostname: Option<IpAddr>,
+    external_ip: Option<IpAddr>,
+}
+
+#[derive(Deserialize, Default)]
+struct YamlExtendedOptions {
+    memory_quota: Option<Mebibytes>,
+    cache_type: Option<CacheType>,
+    ephemeral_disk_encryption: Option<bool>,
+    enable_metrics: Option<bool>,
+    logging_level: Option<LevelFilter>,
+    cache_path: Option<PathBuf>,
 }
 
 #[derive(Clap, Clone)]
@@ -330,5 +330,15 @@ impl Display for UnstableOptions {
             Self::OfflineMode => write!(f, "offline-mode"),
             Self::DisableTls => write!(f, "disable-tls"),
         }
+    }
+}
+
+#[cfg(test)]
+mod sample_yaml {
+    use crate::config::YamlArgs;
+
+    #[test]
+    fn sample_yaml_parses() {
+        assert!(serde_yaml::from_str::<YamlArgs>(include_str!("../settings.sample.yaml")).is_ok())
     }
 }
