@@ -16,6 +16,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v2
+    - name: Set env
+      run: echo "DATABASE_URL=sqlite:./cache/metadata.sqlite" >> $GITHUB_ENV
     - name: Build
       run: cargo build --verbose
     - name: Run tests
