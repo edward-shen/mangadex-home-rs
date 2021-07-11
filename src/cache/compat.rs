@@ -9,14 +9,14 @@ use serde::{
 use super::ImageContentType;
 
 #[derive(Copy, Clone, Serialize, Deserialize)]
-pub(crate) struct LegacyImageMetadata {
+pub struct LegacyImageMetadata {
     pub(crate) content_type: Option<LegacyImageContentType>,
     pub(crate) size: Option<u32>,
     pub(crate) last_modified: Option<LegacyDateTime>,
 }
 
 #[derive(Copy, Clone, Serialize)]
-pub(crate) struct LegacyDateTime(pub DateTime<FixedOffset>);
+pub struct LegacyDateTime(pub DateTime<FixedOffset>);
 
 impl<'de> Deserialize<'de> for LegacyDateTime {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -47,7 +47,7 @@ impl<'de> Deserialize<'de> for LegacyDateTime {
 }
 
 #[derive(Copy, Clone)]
-pub(crate) struct LegacyImageContentType(pub ImageContentType);
+pub struct LegacyImageContentType(pub ImageContentType);
 
 impl Serialize for LegacyImageContentType {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>

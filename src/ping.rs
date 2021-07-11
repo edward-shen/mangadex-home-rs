@@ -129,10 +129,10 @@ impl<'de> Deserialize<'de> for Tls {
                                 .ok()
                                 .and_then(|mut v| {
                                     v.pop().and_then(|key| RSASigningKey::new(&key).ok())
-                                })
+                                });
                         }
                         "certificate" => {
-                            certificates = certs(&mut BufReader::new(value.as_bytes())).ok()
+                            certificates = certs(&mut BufReader::new(value.as_bytes())).ok();
                         }
                         _ => (), // Ignore extra fields
                     }
@@ -251,7 +251,7 @@ pub async fn update_server_state(
         },
         Err(e) => match e {
             e if e.is_timeout() => {
-                error!("Response timed out to control server. Is MangaDex down?")
+                error!("Response timed out to control server. Is MangaDex down?");
             }
             e => warn!("Failed to send request: {}", e),
         },

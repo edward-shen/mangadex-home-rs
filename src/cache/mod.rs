@@ -115,7 +115,7 @@ impl From<LegacyImageMetadata> for ImageMetadata {
     }
 }
 
-#[allow(clippy::pub_enum_variant_names)]
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug)]
 pub enum ImageRequestError {
     InvalidContentType,

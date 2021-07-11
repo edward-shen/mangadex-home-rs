@@ -339,6 +339,6 @@ mod sample_yaml {
 
     #[test]
     fn sample_yaml_parses() {
-        assert!(serde_yaml::from_str::<YamlArgs>(include_str!("../settings.sample.yaml")).is_ok())
+        assert!(serde_yaml::from_str::<YamlArgs>(include_str!("../settings.sample.yaml")).is_ok());
     }
 }

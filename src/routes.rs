@@ -47,6 +47,7 @@ impl Responder for ServerResponse {
     }
 }
 
+#[allow(clippy::unused_async)]
 #[get("/")]
 async fn index() -> impl Responder {
     HttpResponse::Ok().body(include_str!("index.html"))
@@ -122,7 +123,7 @@ pub async fn default(state: Data<RwLockServerState>, req: HttpRequest) -> impl R
     ServerResponse::HttpResponse(resp_builder.body(resp.bytes().await.unwrap_or_default()))
 }
 
-#[allow(clippy::future_not_send)]
+#[allow(clippy::future_not_send, clippy::unused_async)]
 #[get("/metrics")]
 pub async fn metrics() -> impl Responder {
     let metric_families = prometheus::gather();

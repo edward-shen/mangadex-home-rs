@@ -245,7 +245,7 @@ where
         error = writer.write_all(metadata_string.as_bytes()).await.err();
     }
     if error.is_none() {
-        error = error.or(writer.write_all(&bytes).await.err());
+        error = writer.write_all(&bytes).await.err();
     }
 
     if let Some(e) = error {
@@ -408,7 +408,7 @@ mod read_file {
         assert_eq!(
             metadata,
             ImageMetadata {
-                content_length: Some(708370),
+                content_length: Some(708_370),
                 content_type: Some(ImageContentType::Png),
                 last_modified: Some(
                     DateTime::parse_from_rfc3339("2021-04-13T04:37:41+00:00").unwrap()
@@ -447,7 +447,7 @@ mod read_file_compat {
         assert_eq!(
             metadata,
             ImageMetadata {
-                content_length: Some(117888),
+                content_length: Some(117_888),
                 content_type: Some(ImageContentType::Jpeg),
                 last_modified: Some(
                     DateTime::parse_from_rfc2822("Sat, 10 Apr 2021 10:55:22 GMT").unwrap()

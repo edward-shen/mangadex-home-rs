@@ -130,7 +130,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     send_stop(&client_secret).await;
                 } else {
                     warn!("Got second Ctrl-C, forcefully exiting");
-                    system.stop()
+                    system.stop();
                 }
             });
         }
