@@ -197,7 +197,7 @@ impl Cache for DiskCache {
 
         tokio::spawn(async move { channel.send(DbMessage::Get(path_0)).await });
 
-        super::fs::read_file(&path).await.map(|res| {
+        super::fs::read_file_from_path(&path).await.map(|res| {
             let (inner, maybe_header, metadata) = res?;
             CacheStream::new(inner, maybe_header)
                 .map(|stream| (stream, metadata))

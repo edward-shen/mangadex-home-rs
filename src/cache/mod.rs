@@ -23,8 +23,11 @@ pub use disk::DiskCache;
 pub use fs::UpstreamError;
 pub use mem::MemoryCache;
 
+use self::compat::LegacyImageMetadata;
+
 pub static ENCRYPTION_KEY: OnceCell<Key> = OnceCell::new();
 
+mod compat;
 mod disk;
 mod fs;
 pub mod mem;
@@ -59,7 +62,7 @@ impl From<&CacheKey> for PathBuf {
 #[derive(Clone)]
 pub struct CachedImage(pub Bytes);
 
-#[derive(Copy, Clone, Serialize, Deserialize)]
+#[derive(Copy, Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct ImageMetadata {
     pub content_type: Option<ImageContentType>,
     pub content_length: Option<u32>,
@@ -67,7 +70,7 @@ pub struct ImageMetadata {
 }
 
 // Confirmed by Ply to be these types: https://link.eddie.sh/ZXfk0
-#[derive(Copy, Clone, Serialize_repr, Deserialize_repr)]
+#[derive(Copy, Clone, Serialize_repr, Deserialize_repr, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ImageContentType {
     Png = 0,
@@ -98,6 +101,16 @@ impl AsRef<str> for ImageContentType {
             Self::Png => "image/png",
             Self::Jpeg => "image/jpeg",
             Self::Gif => "image/gif",
+        }
+    }
+}
+
+impl From<LegacyImageMetadata> for ImageMetadata {
+    fn from(legacy: LegacyImageMetadata) -> Self {
+        Self {
+            content_type: legacy.content_type.map(|v| v.0),
+            content_length: legacy.size,
+            last_modified: legacy.last_modified.map(|v| v.0),
         }
     }
 }

@@ -16,6 +16,7 @@
 
 use std::error::Error;
 use std::fmt::Display;
+use std::io::{Seek, SeekFrom};
 use std::path::Path;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -33,6 +34,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::sync::mpsc::Sender;
 use tokio_util::codec::{BytesCodec, FramedRead};
 
+use super::compat::LegacyImageMetadata;
 use super::{CacheKey, ImageMetadata, InnerStream, ENCRYPTION_KEY};
 
 #[derive(Serialize, Deserialize)]
@@ -44,14 +46,30 @@ pub enum OnDiskMetadata {
 /// Attempts to lookup the file on disk, returning a byte stream if it exists.
 /// Note that this could return two types of streams, depending on if the file
 /// is in progress of being written to.
-pub(super) async fn read_file(
+#[inline]
+pub(super) async fn read_file_from_path(
     path: &Path,
 ) -> Option<Result<(InnerStream, Option<Header>, ImageMetadata), std::io::Error>> {
-    let file = std::fs::File::open(path).ok()?;
-    let file_0 = file.try_clone().unwrap();
+    read_file(std::fs::File::open(path).ok()?).await
+}
+
+async fn read_file(
+    file: std::fs::File,
+) -> Option<Result<(InnerStream, Option<Header>, ImageMetadata), std::io::Error>> {
+    let mut file_0 = file.try_clone().unwrap();
+    let file_1 = file.try_clone().unwrap();
+
     // Try reading decrypted header first...
     let mut deserializer = serde_json::Deserializer::from_reader(file);
-    let maybe_metadata = ImageMetadata::deserialize(&mut deserializer);
+    let mut maybe_metadata = ImageMetadata::deserialize(&mut deserializer);
+
+    // Failed to parse normally, see if we have a legacy file format
+    if maybe_metadata.is_err() {
+        file_0.seek(SeekFrom::Start(2)).ok()?;
+        let mut deserializer = serde_json::Deserializer::from_reader(file_0);
+        maybe_metadata =
+            LegacyImageMetadata::deserialize(&mut deserializer).map(LegacyImageMetadata::into);
+    }
 
     let parsed_metadata;
     let mut maybe_header = None;
@@ -65,11 +83,11 @@ pub(super) async fn read_file(
             return None;
         }
 
-        reader = Some(Box::pin(File::from_std(file_0)));
+        reader = Some(Box::pin(File::from_std(file_1)));
         parsed_metadata = Some(metadata);
         debug!("Found not encrypted file");
     } else {
-        let mut file = File::from_std(file_0);
+        let mut file = File::from_std(file_1);
         let file_0 = file.try_clone().await.unwrap();
 
         // image is encrypted or corrupt
@@ -343,7 +361,7 @@ impl AsyncWrite for EncryptedDiskWriter {
 }
 
 /// Represents some upstream error.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct UpstreamError;
 
 impl Error for UpstreamError {}
@@ -358,5 +376,83 @@ impl From<UpstreamError> for actix_web::Error {
     #[inline]
     fn from(_: UpstreamError) -> Self {
         PayloadError::Incomplete(None).into()
+    }
+}
+
+#[cfg(test)]
+mod read_file {
+    use crate::cache::{ImageContentType, ImageMetadata};
+
+    use super::read_file;
+    use bytes::Bytes;
+    use chrono::DateTime;
+    use futures::StreamExt;
+    use std::io::{Seek, SeekFrom, Write};
+    use tempfile::tempfile;
+
+    #[tokio::test]
+    async fn can_read() {
+        let mut temp_file = tempfile().unwrap();
+        temp_file
+            .write_all(
+                br#"{"content_type":0,"content_length":708370,"last_modified":"2021-04-13T04:37:41+00:00"}abc"#,
+            )
+            .unwrap();
+        temp_file.seek(SeekFrom::Start(0)).unwrap();
+
+        let (inner_stream, maybe_header, metadata) = read_file(temp_file).await.unwrap().unwrap();
+
+        let foo: Vec<_> = inner_stream.collect().await;
+        assert_eq!(foo, vec![Ok(Bytes::from("abc"))]);
+        assert!(maybe_header.is_none());
+        assert_eq!(
+            metadata,
+            ImageMetadata {
+                content_length: Some(708370),
+                content_type: Some(ImageContentType::Png),
+                last_modified: Some(
+                    DateTime::parse_from_rfc3339("2021-04-13T04:37:41+00:00").unwrap()
+                )
+            }
+        );
+    }
+}
+
+#[cfg(test)]
+mod read_file_compat {
+    use crate::cache::{ImageContentType, ImageMetadata};
+
+    use super::read_file;
+    use bytes::Bytes;
+    use chrono::DateTime;
+    use futures::StreamExt;
+    use std::io::{Seek, SeekFrom, Write};
+    use tempfile::tempfile;
+
+    #[tokio::test]
+    async fn can_read_legacy() {
+        let mut temp_file = tempfile().unwrap();
+        temp_file
+            .write_all(
+                b"\x00\x5b{\"content_type\":\"image/jpeg\",\"last_modified\":\"Sat, 10 Apr 2021 10:55:22 GMT\",\"size\":117888}abc",
+            )
+            .unwrap();
+        temp_file.seek(SeekFrom::Start(0)).unwrap();
+
+        let (inner_stream, maybe_header, metadata) = read_file(temp_file).await.unwrap().unwrap();
+
+        let foo: Vec<_> = inner_stream.collect().await;
+        assert_eq!(foo, vec![Ok(Bytes::from("abc"))]);
+        assert!(maybe_header.is_none());
+        assert_eq!(
+            metadata,
+            ImageMetadata {
+                content_length: Some(117888),
+                content_type: Some(ImageContentType::Jpeg),
+                last_modified: Some(
+                    DateTime::parse_from_rfc2822("Sat, 10 Apr 2021 10:55:22 GMT").unwrap()
+                )
+            }
+        );
     }
 }
