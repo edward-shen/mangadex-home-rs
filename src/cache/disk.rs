@@ -70,6 +70,24 @@ impl DiskCache {
             db_update_channel_sender: db_tx,
         });
 
+        // maybe this is better? in theory this sounds like it should be faster
+        // but in practice I haven't seen any perf improvements
+
+        // let ret = Arc::clone(&new_self);
+        // std::thread::spawn(move || {
+        //     tokio::runtime::Builder::new_current_thread()
+        //         .enable_all()
+        //         .build()
+        //         .unwrap()
+        //         .block_on(db_listener(
+        //             Arc::clone(&new_self),
+        //             db_rx,
+        //             db_pool,
+        //             disk_max_size.get() as u64 / 20 * 19,
+        //         ))
+        // });
+        // ret
+
         tokio::spawn(db_listener(
             Arc::clone(&new_self),
             db_rx,
