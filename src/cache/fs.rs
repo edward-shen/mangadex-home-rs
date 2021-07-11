@@ -30,7 +30,7 @@ use sodiumoxide::crypto::secretstream::{
     Header, Pull, Push, Stream as SecretStream, Tag, HEADERBYTES,
 };
 use tokio::fs::{create_dir_all, remove_file, File};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::sync::mpsc::Sender;
 use tokio_util::codec::{BytesCodec, FramedRead};
 
@@ -88,6 +88,7 @@ async fn read_file(
         debug!("Found not encrypted file");
     } else {
         let mut file = File::from_std(file_1);
+        file.seek(SeekFrom::Start(0)).await.ok()?;
         let file_0 = file.try_clone().await.unwrap();
 
         // image is encrypted or corrupt
