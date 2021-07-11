@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures::StreamExt;
-use log::{error, warn, LevelFilter};
+use log::{debug, error, warn, LevelFilter};
 use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::{ConnectOptions, SqlitePool};
 use tokio::fs::remove_file;
@@ -175,6 +175,7 @@ async fn db_listener(
             let mut size_freed = 0;
             #[allow(clippy::cast_sign_loss)]
             for item in items {
+                debug!("deleting file due to exceeding cache size");
                 size_freed += item.size as u64;
                 tokio::spawn(remove_file(item.id));
             }
