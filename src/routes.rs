@@ -1,10 +1,8 @@
 use std::sync::atomic::Ordering;
 
 use actix_web::error::ErrorNotFound;
-use actix_web::http::header::{
-    ACCESS_CONTROL_ALLOW_ORIGIN, ACCESS_CONTROL_EXPOSE_HEADERS, CACHE_CONTROL, CONTENT_LENGTH,
-    CONTENT_TYPE, LAST_MODIFIED, X_CONTENT_TYPE_OPTIONS,
-};
+use actix_web::http::header::{CONTENT_LENGTH, CONTENT_TYPE, LAST_MODIFIED};
+use actix_web::http::HeaderValue;
 use actix_web::web::Path;
 use actix_web::HttpResponseBuilder;
 use actix_web::{get, web::Data, HttpRequest, HttpResponse, Responder};
@@ -19,7 +17,7 @@ use sodiumoxide::crypto::box_::{open_precomputed, Nonce, PrecomputedKey, NONCEBY
 use thiserror::Error;
 
 use crate::cache::{Cache, CacheKey, ImageMetadata, UpstreamError};
-use crate::client::{FetchResult, HTTP_CLIENT};
+use crate::client::{FetchResult, DEFAULT_HEADERS, HTTP_CLIENT};
 use crate::config::{OFFLINE_MODE, VALIDATE_TOKENS};
 use crate::metrics::{
     CACHE_HIT_COUNTER, CACHE_MISS_COUNTER, REQUESTS_DATA_COUNTER, REQUESTS_DATA_SAVER_COUNTER,
@@ -106,21 +104,24 @@ pub async fn default(state: Data<RwLockServerState>, req: HttpRequest) -> impl R
 
     info!("Got unknown path, just proxying: {}", path);
 
-    let resp = match HTTP_CLIENT.inner().get(path).send().await {
+    let mut resp = match HTTP_CLIENT.inner().get(path).send().await {
         Ok(resp) => resp,
         Err(e) => {
             error!("{}", e);
             return ServerResponse::HttpResponse(HttpResponse::BadGateway().finish());
         }
     };
-    let content_type = resp.headers().get(CONTENT_TYPE);
+    let content_type = resp.headers_mut().remove(CONTENT_TYPE);
     let mut resp_builder = HttpResponseBuilder::new(resp.status());
+    let mut headers = DEFAULT_HEADERS.clone();
     if let Some(content_type) = content_type {
-        resp_builder.insert_header((CONTENT_TYPE, content_type));
+        headers.insert(CONTENT_TYPE, content_type);
     }
-    push_headers(&mut resp_builder);
+    // push_headers(&mut resp_builder);
 
-    ServerResponse::HttpResponse(resp_builder.body(resp.bytes().await.unwrap_or_default()))
+    let mut ret = resp_builder.body(resp.bytes().await.unwrap_or_default());
+    *ret.headers_mut() = headers;
+    ServerResponse::HttpResponse(ret)
 }
 
 #[allow(clippy::future_not_send, clippy::unused_async)]
@@ -155,7 +156,9 @@ pub enum TokenValidationError {
 impl Responder for TokenValidationError {
     #[inline]
     fn respond_to(self, _: &HttpRequest) -> HttpResponse {
-        push_headers(&mut HttpResponse::Forbidden()).finish()
+        let mut resp = HttpResponse::Forbidden().finish();
+        *resp.headers_mut() = DEFAULT_HEADERS.clone();
+        resp
     }
 }
 
@@ -195,18 +198,6 @@ fn validate_token(
     debug!("Token validated!");
 
     Ok(())
-}
-
-#[inline]
-pub fn push_headers(builder: &mut HttpResponseBuilder) -> &mut HttpResponseBuilder {
-    builder
-        .insert_header((X_CONTENT_TYPE_OPTIONS, "nosniff"))
-        .insert_header((ACCESS_CONTROL_ALLOW_ORIGIN, "https://mangadex.org"))
-        .insert_header((ACCESS_CONTROL_EXPOSE_HEADERS, "*"))
-        .insert_header((CACHE_CONTROL, "public, max-age=1209600"))
-        .insert_header(("Timing-Allow-Origin", "https://mangadex.org"));
-
-    builder
 }
 
 #[allow(clippy::future_not_send)]
@@ -267,6 +258,7 @@ async fn fetch_image(
     }
 }
 
+#[inline]
 pub fn construct_response(
     data: impl Stream<Item = Result<Bytes, UpstreamError>> + Unpin + 'static,
     metadata: &ImageMetadata,
@@ -274,17 +266,28 @@ pub fn construct_response(
     trace!("Constructing response");
 
     let mut resp = HttpResponse::Ok();
+
+    let mut headers = DEFAULT_HEADERS.clone();
     if let Some(content_type) = metadata.content_type {
-        resp.append_header((CONTENT_TYPE, content_type.as_ref()));
+        headers.insert(
+            CONTENT_TYPE,
+            HeaderValue::from_str(content_type.as_ref()).unwrap(),
+        );
     }
 
     if let Some(content_length) = metadata.content_length {
-        resp.append_header((CONTENT_LENGTH, content_length));
+        headers.insert(CONTENT_LENGTH, HeaderValue::from(content_length));
     }
 
     if let Some(last_modified) = metadata.last_modified {
-        resp.append_header((LAST_MODIFIED, last_modified.to_rfc2822()));
+        headers.insert(
+            LAST_MODIFIED,
+            HeaderValue::from_str(&last_modified.to_rfc2822()).unwrap(),
+        );
     }
 
-    ServerResponse::HttpResponse(push_headers(&mut resp).streaming(data))
+    let mut ret = resp.streaming(data);
+    *ret.headers_mut() = headers;
+
+    ServerResponse::HttpResponse(ret)
 }
