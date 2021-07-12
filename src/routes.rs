@@ -119,9 +119,9 @@ pub async fn default(state: Data<RwLockServerState>, req: HttpRequest) -> impl R
     }
     // push_headers(&mut resp_builder);
 
-    let mut ret = resp_builder.body(resp.bytes().await.unwrap_or_default());
-    *ret.headers_mut() = headers;
-    ServerResponse::HttpResponse(ret)
+    let mut resp = resp_builder.body(resp.bytes().await.unwrap_or_default());
+    *resp.headers_mut() = headers;
+    ServerResponse::HttpResponse(resp)
 }
 
 #[allow(clippy::future_not_send, clippy::unused_async)]
