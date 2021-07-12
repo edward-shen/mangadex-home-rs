@@ -1,24 +1,20 @@
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Duration;
 
-use actix_web::{
-    http::{HeaderMap, HeaderName, HeaderValue},
-    web::Data,
-};
+use actix_web::http::{HeaderMap, HeaderName, HeaderValue};
+use actix_web::web::Data;
 use bytes::Bytes;
 use log::{debug, error, warn};
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
-use reqwest::{
-    header::{
-        ACCESS_CONTROL_ALLOW_ORIGIN, ACCESS_CONTROL_EXPOSE_HEADERS, CACHE_CONTROL, CONTENT_LENGTH,
-        CONTENT_TYPE, LAST_MODIFIED, X_CONTENT_TYPE_OPTIONS,
-    },
-    Client, StatusCode,
+use reqwest::header::{
+    ACCESS_CONTROL_ALLOW_ORIGIN, ACCESS_CONTROL_EXPOSE_HEADERS, CACHE_CONTROL, CONTENT_LENGTH,
+    CONTENT_TYPE, LAST_MODIFIED, X_CONTENT_TYPE_OPTIONS,
 };
-use tokio::sync::{
-    watch::{channel, Receiver},
-    Notify,
-};
+use reqwest::{Client, StatusCode};
+use tokio::sync::watch::{channel, Receiver};
+use tokio::sync::Notify;
 
 use crate::cache::{Cache, CacheKey, ImageMetadata};
 

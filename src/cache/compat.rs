@@ -1,10 +1,11 @@
+//! These structs have alternative deserialize and serializations
+//! implementations to assist reading from the official client file format.
+
 use std::str::FromStr;
 
 use chrono::{DateTime, FixedOffset};
-use serde::{
-    de::{Unexpected, Visitor},
-    Deserialize, Serialize,
-};
+use serde::de::{Unexpected, Visitor};
+use serde::{Deserialize, Serialize};
 
 use super::ImageContentType;
 

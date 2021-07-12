@@ -115,12 +115,11 @@ impl From<LegacyImageMetadata> for ImageMetadata {
     }
 }
 
-#[allow(clippy::enum_variant_names)]
 #[derive(Debug)]
 pub enum ImageRequestError {
-    InvalidContentType,
-    InvalidContentLength,
-    InvalidLastModified,
+    ContentType,
+    ContentLength,
+    LastModified,
 }
 
 impl ImageMetadata {
@@ -136,14 +135,14 @@ impl ImageMetadata {
                     Err(_) => Err(InvalidContentType),
                 })
                 .transpose()
-                .map_err(|_| ImageRequestError::InvalidContentType)?,
+                .map_err(|_| ImageRequestError::ContentType)?,
             content_length: content_length
                 .map(|header_val| {
                     header_val
                         .to_str()
-                        .map_err(|_| ImageRequestError::InvalidContentLength)?
+                        .map_err(|_| ImageRequestError::ContentLength)?
                         .parse()
-                        .map_err(|_| ImageRequestError::InvalidContentLength)
+                        .map_err(|_| ImageRequestError::ContentLength)
                 })
                 .transpose()?,
             last_modified: last_modified
@@ -151,9 +150,9 @@ impl ImageMetadata {
                     DateTime::parse_from_rfc2822(
                         header_val
                             .to_str()
-                            .map_err(|_| ImageRequestError::InvalidLastModified)?,
+                            .map_err(|_| ImageRequestError::LastModified)?,
                     )
-                    .map_err(|_| ImageRequestError::InvalidLastModified)
+                    .map_err(|_| ImageRequestError::LastModified)
                 })
                 .transpose()?,
         })

@@ -1,5 +1,7 @@
 //! Low memory caching stuff
 
+use std::convert::TryFrom;
+use std::hint::unreachable_unchecked;
 use std::os::unix::prelude::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -12,7 +14,7 @@ use log::{debug, error, warn, LevelFilter};
 use md5::digest::generic_array::GenericArray;
 use md5::{Digest, Md5};
 use sqlx::sqlite::SqliteConnectOptions;
-use sqlx::{ConnectOptions, SqlitePool};
+use sqlx::{ConnectOptions, Sqlite, SqlitePool, Transaction};
 use tokio::fs::remove_file;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio_stream::wrappers::ReceiverStream;
@@ -112,7 +114,6 @@ async fn db_listener(
 ) {
     let mut recv_stream = ReceiverStream::new(db_rx).ready_chunks(128);
     while let Some(messages) = recv_stream.next().await {
-        let now = chrono::Utc::now();
         let mut transaction = match db_pool.begin().await {
             Ok(transaction) => transaction,
             Err(e) => {
@@ -120,45 +121,12 @@ async fn db_listener(
                 continue;
             }
         };
+
         for message in messages {
             match message {
-                DbMessage::Get(entry) => {
-                    let hash = Md5Hash::from(entry.as_path());
-                    let hash_str = hash.to_hex_string();
-                    let key = entry.as_os_str().to_str();
-                    // let legacy_key = key.map();
-                    let query = sqlx::query!(
-                        "update Images set accessed = ? where id = ? or id = ?",
-                        now,
-                        key,
-                        hash_str
-                    )
-                    .execute(&mut transaction)
-                    .await;
-                    if let Err(e) = query {
-                        warn!("Failed to update timestamp in db for {:?}: {}", key, e);
-                    }
-                }
+                DbMessage::Get(entry) => handle_db_get(entry, &mut transaction).await,
                 DbMessage::Put(entry, size) => {
-                    let key = entry.as_os_str().to_str();
-                    {
-                        // This is intentional.
-                        #[allow(clippy::cast_possible_wrap)]
-                        let size = size as i64;
-                        let query = sqlx::query!(
-                            "insert into Images (id, size, accessed) values (?, ?, ?) on conflict do nothing",
-                            key,
-                            size,
-                            now,
-                        )
-                        .execute(&mut transaction)
-                        .await;
-                        if let Err(e) = query {
-                            warn!("Failed to add {:?} to db: {}", key, e);
-                        }
-                    }
-
-                    cache.disk_cur_size.fetch_add(size, Ordering::Release);
+                    handle_db_put(entry, size, &cache, &mut transaction).await;
                 }
             }
         }
@@ -233,6 +201,60 @@ async fn db_listener(
     }
 }
 
+async fn handle_db_get(entry: Arc<PathBuf>, transaction: &mut Transaction<'_, Sqlite>) {
+    let hash = if let Ok(hash) = Md5Hash::try_from(entry.as_path()) {
+        hash
+    } else {
+        error!(
+            "Failed to derive hash from entry, dropping message: {}",
+            entry.to_string_lossy()
+        );
+        return;
+    };
+
+    let hash_str = hash.to_hex_string();
+    let key = entry.as_os_str().to_str();
+    let now = chrono::Utc::now();
+    let query = sqlx::query!(
+        "update Images set accessed = ? where id = ? or id = ?",
+        now,
+        key,
+        hash_str
+    )
+    .execute(transaction)
+    .await;
+    if let Err(e) = query {
+        warn!("Failed to update timestamp in db for {:?}: {}", key, e);
+    }
+}
+
+async fn handle_db_put(
+    entry: Arc<PathBuf>,
+    size: u64,
+    cache: &DiskCache,
+    transaction: &mut Transaction<'_, Sqlite>,
+) {
+    let key = entry.as_os_str().to_str();
+    let now = chrono::Utc::now();
+
+    // This is intentional.
+    #[allow(clippy::cast_possible_wrap)]
+    let casted_size = size as i64;
+    let query = sqlx::query!(
+        "insert into Images (id, size, accessed) values (?, ?, ?) on conflict do nothing",
+        key,
+        casted_size,
+        now,
+    )
+    .execute(transaction)
+    .await;
+    if let Err(e) = query {
+        warn!("Failed to add {:?} to db: {}", key, e);
+    }
+
+    cache.disk_cur_size.fetch_add(size, Ordering::Release);
+}
+
 /// Represents a Md5 hash that can be converted to and from a path. This is used
 /// for compatibility with the official client, where the image id and on-disk
 /// path is determined by file path.
@@ -245,12 +267,14 @@ impl Md5Hash {
     }
 }
 
-impl From<&Path> for Md5Hash {
-    fn from(path: &Path) -> Self {
+impl TryFrom<&Path> for Md5Hash {
+    type Error = ();
+
+    fn try_from(path: &Path) -> Result<Self, Self::Error> {
         let mut iter = path.iter();
-        let file_name = iter.next_back().unwrap();
-        let chapter_hash = iter.next_back().unwrap();
-        let is_data_saver = iter.next_back().unwrap() == "saver";
+        let file_name = iter.next_back().ok_or(())?;
+        let chapter_hash = iter.next_back().ok_or(())?;
+        let is_data_saver = iter.next_back().ok_or(())? == "saver";
         let mut hasher = Md5::new();
         if is_data_saver {
             hasher.update("saver");
@@ -258,23 +282,23 @@ impl From<&Path> for Md5Hash {
         hasher.update(chapter_hash.as_bytes());
         hasher.update(".");
         hasher.update(file_name.as_bytes());
-        Self(hasher.finalize())
+        Ok(Self(hasher.finalize()))
     }
 }
 
-// Lint is overly aggressive here, as Md5Hash guarantees there to be at least 3
-// bytes.
-#[allow(clippy::fallible_impl_from)]
 impl From<Md5Hash> for PathBuf {
     fn from(hash: Md5Hash) -> Self {
         let hex_value = hash.to_hex_string();
-        hex_value[0..3]
+        let path = hex_value[0..3]
             .chars()
             .rev()
             .map(|char| Self::from(char.to_string()))
-            .reduce(|first, second| first.join(second))
-            .unwrap() // literally not possible
-            .join(hex_value)
+            .reduce(|first, second| first.join(second));
+
+        match path {
+            Some(p) => p.join(hex_value),
+            None => unsafe { unreachable_unchecked() }, // literally not possible
+        }
     }
 }
 
