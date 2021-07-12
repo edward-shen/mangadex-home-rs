@@ -164,6 +164,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Start HTTPS server
     let server = HttpServer::new(move || {
         App::new()
+            .wrap(actix_web::middleware::Compress::default())
             .service(routes::index)
             .service(routes::token_data)
             .service(routes::token_data_saver)
