@@ -40,7 +40,7 @@ serde_repr = "0.1"
 serde_yaml = "0.8"
 simple_logger = "1"
 sodiumoxide = "0.2"
-sqlx = { version = "0.5", features = [ "runtime-actix-rustls", "sqlite", "time", "chrono", "macros" ] }
+sqlx = { version = "0.5", features = [ "runtime-actix-rustls", "sqlite", "time", "chrono", "macros", "offline" ] }
 thiserror = "1"
 tokio = { version = "1", features = [ "full", "parking_lot" ] }
 tokio-stream = { version = "0.1", features = [ "sync" ] }

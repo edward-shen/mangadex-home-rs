@@ -38,3 +38,16 @@ jobs:
         run: cargo build --verbose
       - name: Run tests
         run: cargo test --verbose
+
+  sqlx-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install sqlx-cli
+        run: cargo install sqlx-cli
+      - name: Initialize database
+        run: mkdir -p cache && sqlite3 cache/metadata.sqlite < db_queries/init.sql
+      - name: Check sqlx statements
+        run: cargo sqlx prepare --check
+        with:
+          fail_ci_if_error: true

@@ -1,0 +1,75 @@
+{
+  "db": "SQLite",
+  "2a8aa6dd2c59241a451cd73f23547d0e94930e35654692839b5d11bb8b87703e": {
+    "query": "insert into Images (id, size, accessed) values (?, ?, ?) on conflict do nothing",
+    "describe": {
+      "columns": [],
+      "parameters": {
+        "Right": 3
+      },
+      "nullable": []
+    }
+  },
+  "311721fec7824c2fc3ecf53f714949a49245c11a6b622efdb04fdac24be41ba3": {
+    "query": "SELECT IFNULL(SUM(size), 0) AS size FROM Images",
+    "describe": {
+      "columns": [
+        {
+          "name": "size",
+          "ordinal": 0,
+          "type_info": "Int"
+        }
+      ],
+      "parameters": {
+        "Right": 0
+      },
+      "nullable": [
+        true
+      ]
+    }
+  },
+  "44234188e873a467ecf2c60dfb4731011e0b7afc4472339ed2ae33aee8b0c9dd": {
+    "query": "select id, size from Images order by accessed asc limit 1000",
+    "describe": {
+      "columns": [
+        {
+          "name": "id",
+          "ordinal": 0,
+          "type_info": "Text"
+        },
+        {
+          "name": "size",
+          "ordinal": 1,
+          "type_info": "Int64"
+        }
+      ],
+      "parameters": {
+        "Right": 0
+      },
+      "nullable": [
+        false,
+        false
+      ]
+    }
+  },
+  "59e09d6fbcc7cd91807f6c9598e4028352b28e83e85c98d96cafd3e713b4d7b7": {
+    "query": "update Images set accessed = ? where id = ? or id = ?",
+    "describe": {
+      "columns": [],
+      "parameters": {
+        "Right": 3
+      },
+      "nullable": []
+    }
+  },
+  "a60501a30fd75b2a2a59f089e850343af075436a5c543a267ecb4fa841593ce9": {
+    "query": "create table if not exists Images(\n    id varchar primary key not null,\n    size integer not null,\n    accessed timestamp not null default CURRENT_TIMESTAMP\n);\ncreate index if not exists Images_accessed on Images(accessed);",
+    "describe": {
+      "columns": [],
+      "parameters": {
+        "Right": 0
+      },
+      "nullable": []
+    }
+  }
+}
