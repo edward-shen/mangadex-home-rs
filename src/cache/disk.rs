@@ -102,6 +102,19 @@ impl DiskCache {
 
         new_self
     }
+
+    #[cfg(test)]
+    fn in_memory() -> (Self, Receiver<DbMessage>) {
+        let (db_tx, db_rx) = channel(128);
+        (
+            Self {
+                disk_path: PathBuf::new(),
+                disk_cur_size: AtomicU64::new(0),
+                db_update_channel_sender: db_tx,
+            },
+            db_rx,
+        )
+    }
 }
 
 /// Spawn a new task that will listen for updates to the db, pruning if the size
@@ -124,9 +137,9 @@ async fn db_listener(
 
         for message in messages {
             match message {
-                DbMessage::Get(entry) => handle_db_get(entry, &mut transaction).await,
+                DbMessage::Get(entry) => handle_db_get(&entry, &mut transaction).await,
                 DbMessage::Put(entry, size) => {
-                    handle_db_put(entry, size, &cache, &mut transaction).await;
+                    handle_db_put(&entry, size, &cache, &mut transaction).await;
                 }
             }
         }
@@ -201,8 +214,8 @@ async fn db_listener(
     }
 }
 
-async fn handle_db_get(entry: Arc<PathBuf>, transaction: &mut Transaction<'_, Sqlite>) {
-    let hash = if let Ok(hash) = Md5Hash::try_from(entry.as_path()) {
+async fn handle_db_get(entry: &Path, transaction: &mut Transaction<'_, Sqlite>) {
+    let hash = if let Ok(hash) = Md5Hash::try_from(entry) {
         hash
     } else {
         error!(
@@ -229,7 +242,7 @@ async fn handle_db_get(entry: Arc<PathBuf>, transaction: &mut Transaction<'_, Sq
 }
 
 async fn handle_db_put(
-    entry: Arc<PathBuf>,
+    entry: &Path,
     size: u64,
     cache: &DiskCache,
     transaction: &mut Transaction<'_, Sqlite>,
@@ -248,6 +261,7 @@ async fn handle_db_put(
     )
     .execute(transaction)
     .await;
+
     if let Err(e) = query {
         warn!("Failed to add {:?} to db: {}", key, e);
     }
@@ -366,6 +380,79 @@ impl CallbackCache for DiskCache {
         super::fs::write_file(&path, key, image, metadata, db_callback, Some(on_complete))
             .await
             .map_err(CacheError::from)
+    }
+}
+
+#[cfg(test)]
+mod db {
+    use chrono::{DateTime, Utc};
+    use sqlx::{Connection, Row, SqliteConnection};
+    use std::error::Error;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn get() -> Result<(), Box<dyn Error>> {
+        let (cache, _) = DiskCache::in_memory();
+        let path = PathBuf::from_str("a/b/c")?;
+        let mut conn = SqliteConnection::connect("sqlite::memory:").await?;
+        sqlx::query_file!("./db_queries/init.sql")
+            .execute(&mut conn)
+            .await?;
+
+        // Add an entry
+        let mut transaction = conn.begin().await?;
+        handle_db_put(&path, 10, &cache, &mut transaction).await;
+        transaction.commit().await?;
+
+        let time_fence = Utc::now();
+
+        let mut transaction = conn.begin().await?;
+        handle_db_get(&path, &mut transaction).await;
+        transaction.commit().await?;
+
+        let mut rows: Vec<_> = sqlx::query("select * from Images")
+            .fetch(&mut conn)
+            .collect()
+            .await;
+        assert_eq!(rows.len(), 1);
+        let entry = rows.pop().unwrap()?;
+        assert!(time_fence < entry.get::<'_, DateTime<Utc>, _>("accessed"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn put() -> Result<(), Box<dyn Error>> {
+        let (cache, _) = DiskCache::in_memory();
+        let path = PathBuf::from_str("a/b/c")?;
+        let mut conn = SqliteConnection::connect("sqlite::memory:").await?;
+        sqlx::query_file!("./db_queries/init.sql")
+            .execute(&mut conn)
+            .await?;
+
+        let mut transaction = conn.begin().await?;
+        let transaction_time = Utc::now();
+        handle_db_put(&path, 10, &cache, &mut transaction).await;
+        transaction.commit().await?;
+
+        let mut rows: Vec<_> = sqlx::query("select * from Images")
+            .fetch(&mut conn)
+            .collect()
+            .await;
+        assert_eq!(rows.len(), 1);
+
+        let entry = rows.pop().unwrap()?;
+        assert_eq!(entry.get::<'_, &str, _>("id"), "a/b/c");
+        assert_eq!(entry.get::<'_, i64, _>("size"), 10);
+
+        let accessed: DateTime<Utc> = entry.get("accessed");
+        assert!(transaction_time < accessed);
+        assert!(accessed < Utc::now());
+
+        assert_eq!(cache.disk_cur_size.load(Ordering::SeqCst), 10);
+
+        Ok(())
     }
 }
 
