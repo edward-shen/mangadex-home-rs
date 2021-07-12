@@ -18,6 +18,8 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  DATABASE_URL: sqlite:./cache/metadata.sqlite
+  SQLX_OFFLINE: true
 
 jobs:
   clippy:
