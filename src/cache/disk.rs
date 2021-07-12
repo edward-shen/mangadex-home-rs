@@ -377,8 +377,8 @@ mod md5_hash {
     fn to_cache_path() {
         let hash = Md5Hash(
             *GenericArray::<_, <Md5 as md5::Digest>::OutputSize>::from_slice(&[
-                // 0xab 0xcd 0xef five times, followed by an 0xab
-                171, 205, 239, 171, 205, 239, 171, 205, 239, 171, 205, 239, 171, 205, 239, 171,
+                0xab, 0xcd, 0xef, 0xab, 0xcd, 0xef, 0xab, 0xcd, 0xef, 0xab, 0xcd, 0xef, 0xab, 0xcd,
+                0xef, 0xab,
             ]),
         );
         assert_eq!(
