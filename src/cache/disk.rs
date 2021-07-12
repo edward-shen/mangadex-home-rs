@@ -1,6 +1,7 @@
 //! Low memory caching stuff
 
-use std::path::PathBuf;
+use std::os::unix::prelude::OsStrExt;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -8,6 +9,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use futures::StreamExt;
 use log::{debug, error, warn, LevelFilter};
+use md5::digest::generic_array::GenericArray;
+use md5::{Digest, Md5};
 use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::{ConnectOptions, SqlitePool};
 use tokio::fs::remove_file;
@@ -120,11 +123,18 @@ async fn db_listener(
         for message in messages {
             match message {
                 DbMessage::Get(entry) => {
+                    let hash = Md5Hash::from(entry.as_path());
+                    let hash_str = hash.to_hex_string();
                     let key = entry.as_os_str().to_str();
-                    let query =
-                        sqlx::query!("update Images set accessed = ? where id = ?", now, key)
-                            .execute(&mut transaction)
-                            .await;
+                    // let legacy_key = key.map();
+                    let query = sqlx::query!(
+                        "update Images set accessed = ? where id = ? or id = ?",
+                        now,
+                        key,
+                        hash_str
+                    )
+                    .execute(&mut transaction)
+                    .await;
                     if let Err(e) = query {
                         warn!("Failed to update timestamp in db for {:?}: {}", key, e);
                     }
@@ -195,11 +205,76 @@ async fn db_listener(
             for item in items {
                 debug!("deleting file due to exceeding cache size");
                 size_freed += item.size as u64;
-                tokio::spawn(remove_file(item.id));
+                tokio::spawn(async move {
+                    let key = item.id;
+                    if let Err(e) = remove_file(key.clone()).await {
+                        match e.kind() {
+                            std::io::ErrorKind::NotFound => {
+                                let hash = Md5Hash(*GenericArray::from_slice(key.as_bytes()));
+                                let path: PathBuf = hash.into();
+                                if let Err(e) = remove_file(&path).await {
+                                    warn!(
+                                        "Failed to delete file `{}` from cache: {}",
+                                        path.to_string_lossy(),
+                                        e
+                                    );
+                                }
+                            }
+                            _ => {
+                                warn!("Failed to delete file `{}` from cache: {}", &key, e);
+                            }
+                        }
+                    }
+                });
             }
 
             cache.disk_cur_size.fetch_sub(size_freed, Ordering::Release);
         }
+    }
+}
+
+/// Represents a Md5 hash that can be converted to and from a path. This is used
+/// for compatibility with the official client, where the image id and on-disk
+/// path is determined by file path.
+#[derive(Clone, Copy)]
+struct Md5Hash(GenericArray<u8, <Md5 as md5::Digest>::OutputSize>);
+
+impl Md5Hash {
+    fn to_hex_string(self) -> String {
+        format!("{:x}", self.0)
+    }
+}
+
+impl From<&Path> for Md5Hash {
+    fn from(path: &Path) -> Self {
+        let mut iter = path.iter();
+        let file_name = iter.next_back().unwrap();
+        let chapter_hash = iter.next_back().unwrap();
+        let is_data_saver = iter.next_back().unwrap() == "saver";
+        let mut hasher = Md5::new();
+        if is_data_saver {
+            hasher.update("saver");
+        }
+        hasher.update(chapter_hash.as_bytes());
+        hasher.update(".");
+        hasher.update(file_name.as_bytes());
+        Self(hasher.finalize())
+    }
+}
+
+// Lint is overly aggressive here, as Md5Hash guarantees there to be at least 3
+// bytes.
+#[allow(clippy::fallible_impl_from)]
+impl From<Md5Hash> for PathBuf {
+    fn from(hash: Md5Hash) -> Self {
+        let hex_value = hash.to_hex_string();
+        hex_value[0..3]
+            .chars()
+            .rev()
+            .map(|char| Self::from(char.to_string()))
+            .reduce(|first, second| first.join(second))
+            .unwrap() // literally not possible
+            .join(hex_value)
     }
 }
 
