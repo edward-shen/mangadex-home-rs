@@ -49,5 +49,3 @@ jobs:
         run: mkdir -p cache && sqlite3 cache/metadata.sqlite < db_queries/init.sql
       - name: Check sqlx statements
         run: cargo sqlx prepare --check
-        with:
-          fail_ci_if_error: true
