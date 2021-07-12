@@ -258,7 +258,7 @@ async fn handle_db_put(
 /// Represents a Md5 hash that can be converted to and from a path. This is used
 /// for compatibility with the official client, where the image id and on-disk
 /// path is determined by file path.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 struct Md5Hash(GenericArray<u8, <Md5 as md5::Digest>::OutputSize>);
 
 impl Md5Hash {
@@ -288,7 +288,7 @@ impl TryFrom<&Path> for Md5Hash {
 
 impl From<Md5Hash> for PathBuf {
     fn from(hash: Md5Hash) -> Self {
-        let hex_value = hash.to_hex_string();
+        let hex_value = dbg!(hash.to_hex_string());
         let path = hex_value[0..3]
             .chars()
             .rev()
@@ -366,5 +366,59 @@ impl CallbackCache for DiskCache {
         super::fs::write_file(&path, key, image, metadata, db_callback, Some(on_complete))
             .await
             .map_err(CacheError::from)
+    }
+}
+
+#[cfg(test)]
+mod md5_hash {
+    use super::*;
+
+    #[test]
+    fn to_cache_path() {
+        let hash = Md5Hash(
+            *GenericArray::<_, <Md5 as md5::Digest>::OutputSize>::from_slice(&[
+                // 0xab 0xcd 0xef five times, followed by an 0xab
+                171, 205, 239, 171, 205, 239, 171, 205, 239, 171, 205, 239, 171, 205, 239, 171,
+            ]),
+        );
+        assert_eq!(
+            PathBuf::from(hash).to_str(),
+            Some("c/b/a/abcdefabcdefabcdefabcdefabcdefab")
+        )
+    }
+
+    #[test]
+    fn from_data_path() {
+        let mut expected_hasher = Md5::new();
+        expected_hasher.update("foo.bar.png");
+        assert_eq!(
+            Md5Hash::try_from(Path::new("data/foo/bar.png")),
+            Ok(Md5Hash(expected_hasher.finalize()))
+        );
+    }
+
+    #[test]
+    fn from_data_saver_path() {
+        let mut expected_hasher = Md5::new();
+        expected_hasher.update("saverfoo.bar.png");
+        assert_eq!(
+            Md5Hash::try_from(Path::new("saver/foo/bar.png")),
+            Ok(Md5Hash(expected_hasher.finalize()))
+        );
+    }
+
+    #[test]
+    fn can_handle_long_paths() {
+        assert_eq!(
+            Md5Hash::try_from(Path::new("a/b/c/d/e/f/g/saver/foo/bar.png")),
+            Md5Hash::try_from(Path::new("saver/foo/bar.png")),
+        );
+    }
+
+    #[test]
+    fn from_invalid_paths() {
+        assert!(Md5Hash::try_from(Path::new("foo/bar.png")).is_err());
+        assert!(Md5Hash::try_from(Path::new("bar.png")).is_err());
+        assert!(Md5Hash::try_from(Path::new("")).is_err());
     }
 }
