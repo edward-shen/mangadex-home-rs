@@ -18,12 +18,13 @@ use sqlx::{ConnectOptions, Sqlite, SqlitePool, Transaction};
 use tokio::fs::remove_file;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio_stream::wrappers::ReceiverStream;
-use tracing::{debug, error, warn};
+use tracing::{debug, error, instrument, warn};
 
 use crate::units::Bytes;
 
 use super::{Cache, CacheError, CacheKey, CacheStream, CallbackCache, ImageMetadata};
 
+#[derive(Debug)]
 pub struct DiskCache {
     disk_path: PathBuf,
     disk_cur_size: AtomicU64,
@@ -215,6 +216,7 @@ async fn db_listener(
     }
 }
 
+#[instrument(level = "debug", skip(transaction))]
 async fn handle_db_get(entry: &Path, transaction: &mut Transaction<'_, Sqlite>) {
     let hash = if let Ok(hash) = Md5Hash::try_from(entry) {
         hash
@@ -242,6 +244,7 @@ async fn handle_db_get(entry: &Path, transaction: &mut Transaction<'_, Sqlite>) 
     }
 }
 
+#[instrument(level = "debug", skip(transaction, cache))]
 async fn handle_db_put(
     entry: &Path,
     size: u64,
@@ -264,7 +267,7 @@ async fn handle_db_put(
     .await;
 
     if let Err(e) = query {
-        warn!("Failed to add {:?} to db: {}", key, e);
+        warn!("Failed to add to db: {}", e);
     }
 
     cache.disk_cur_size.fetch_add(size, Ordering::Release);

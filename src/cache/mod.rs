@@ -15,7 +15,6 @@ use serde::{Deserialize, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
 use sodiumoxide::crypto::secretstream::{Header, Key, Pull, Stream as SecretStream};
 use thiserror::Error;
-use tokio::io::AsyncRead;
 use tokio::sync::mpsc::Sender;
 use tokio_util::codec::{BytesCodec, FramedRead};
 
@@ -24,6 +23,7 @@ pub use fs::UpstreamError;
 pub use mem::MemoryCache;
 
 use self::compat::LegacyImageMetadata;
+use self::fs::MetadataFetch;
 
 pub static ENCRYPTION_KEY: OnceCell<Key> = OnceCell::new();
 
@@ -277,7 +277,7 @@ impl Stream for CacheStream {
 
 pub(self) enum InnerStream {
     Memory(MemStream),
-    Completed(FramedRead<Pin<Box<dyn AsyncRead + Send>>, BytesCodec>),
+    Completed(FramedRead<Pin<Box<dyn MetadataFetch + Send>>, BytesCodec>),
 }
 
 impl From<CachedImage> for InnerStream {
