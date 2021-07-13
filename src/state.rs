@@ -4,7 +4,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use crate::config::{ClientSecret, Config, UnstableOptions, OFFLINE_MODE, VALIDATE_TOKENS};
 use crate::ping::{Request, Response, CONTROL_CENTER_PING_URL};
 use arc_swap::ArcSwap;
-use log::{error, info, warn};
 use once_cell::sync::OnceCell;
 use parking_lot::RwLock;
 use rustls::sign::{CertifiedKey, SigningKey};
@@ -12,6 +11,7 @@ use rustls::Certificate;
 use rustls::{ClientHello, ResolvesServerCert};
 use sodiumoxide::crypto::box_::{PrecomputedKey, PRECOMPUTEDKEYBYTES};
 use thiserror::Error;
+use tracing::{error, info, warn};
 use url::Url;
 
 pub struct ServerState {

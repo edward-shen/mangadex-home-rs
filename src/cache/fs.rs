@@ -24,7 +24,6 @@ use std::task::{Context, Poll};
 use actix_web::error::PayloadError;
 use bytes::Bytes;
 use futures::Future;
-use log::{debug, warn};
 use serde::{Deserialize, Serialize};
 use sodiumoxide::crypto::secretstream::{
     Header, Pull, Push, Stream as SecretStream, Tag, HEADERBYTES,
@@ -33,6 +32,7 @@ use tokio::fs::{create_dir_all, remove_file, File};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::sync::mpsc::Sender;
 use tokio_util::codec::{BytesCodec, FramedRead};
+use tracing::{debug, warn};
 
 use super::compat::LegacyImageMetadata;
 use super::{CacheKey, ImageMetadata, InnerStream, ENCRYPTION_KEY};

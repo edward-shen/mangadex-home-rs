@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures::StreamExt;
-use log::{debug, error, warn, LevelFilter};
+use log::LevelFilter;
 use md5::digest::generic_array::GenericArray;
 use md5::{Digest, Md5};
 use sqlx::sqlite::SqliteConnectOptions;
@@ -18,6 +18,7 @@ use sqlx::{ConnectOptions, Sqlite, SqlitePool, Transaction};
 use tokio::fs::remove_file;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio_stream::wrappers::ReceiverStream;
+use tracing::{debug, error, warn};
 
 use crate::units::Bytes;
 
@@ -323,6 +324,8 @@ impl Cache for DiskCache {
         key: &CacheKey,
     ) -> Option<Result<(CacheStream, ImageMetadata), CacheError>> {
         let channel = self.db_update_channel_sender.clone();
+
+        // TODO: Check legacy path as well
 
         let path = Arc::new(self.disk_path.clone().join(PathBuf::from(key)));
         let path_0 = Arc::clone(&path);

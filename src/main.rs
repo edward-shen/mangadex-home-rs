@@ -15,14 +15,13 @@ use actix_web::web::{self, Data};
 use actix_web::{App, HttpResponse, HttpServer};
 use cache::{Cache, DiskCache};
 use config::Config;
-use log::{debug, error, info, warn};
 use parking_lot::RwLock;
 use rustls::{NoClientAuth, ServerConfig};
-use simple_logger::SimpleLogger;
 use sodiumoxide::crypto::secretstream::gen_key;
 use state::{RwLockServerState, ServerState};
 use stop::send_stop;
 use thiserror::Error;
+use tracing::{debug, error, info, warn};
 
 use crate::cache::mem::{Lfu, Lru};
 use crate::cache::{MemoryCache, ENCRYPTION_KEY};
@@ -80,7 +79,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Logging and warnings
     //
 
-    SimpleLogger::new().with_level(config.log_level).init()?;
+    // SimpleLogger::new().with_level(config.log_level).init()?;
+    tracing_subscriber::fmt()
+        .with_max_level(config.log_level)
+        .init();
 
     if let Err(e) = print_preamble_and_warnings(&config) {
         error!("{}", e);

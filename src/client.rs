@@ -5,7 +5,6 @@ use std::time::Duration;
 use actix_web::http::{HeaderMap, HeaderName, HeaderValue};
 use actix_web::web::Data;
 use bytes::Bytes;
-use log::{debug, error, warn};
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use reqwest::header::{
@@ -15,6 +14,7 @@ use reqwest::header::{
 use reqwest::{Client, StatusCode};
 use tokio::sync::watch::{channel, Receiver};
 use tokio::sync::Notify;
+use tracing::{debug, error, warn};
 
 use crate::cache::{Cache, CacheKey, ImageMetadata};
 

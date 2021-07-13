@@ -12,6 +12,7 @@ use clap::{crate_authors, crate_description, crate_version, Clap};
 use log::LevelFilter;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use tracing::level_filters::LevelFilter as TracingLevelFilter;
 use url::Url;
 
 use crate::units::{KilobitsPerSecond, Mebibytes, Port};
@@ -78,7 +79,7 @@ pub struct Config {
     pub cache_type: CacheType,
     pub cache_path: PathBuf,
     pub shutdown_timeout: NonZeroU16,
-    pub log_level: LevelFilter,
+    pub log_level: TracingLevelFilter,
     pub client_secret: ClientSecret,
     pub port: Port,
     pub bind_address: SocketAddr,
@@ -97,15 +98,23 @@ impl Config {
         let file_extended_options = file_args.extended_options.unwrap_or_default();
 
         let log_level = match (cli_args.quiet, cli_args.verbose) {
-            (n, _) if n > 2 => LevelFilter::Off,
-            (2, _) => LevelFilter::Error,
-            (1, _) => LevelFilter::Warn,
+            (n, _) if n > 2 => TracingLevelFilter::OFF,
+            (2, _) => TracingLevelFilter::ERROR,
+            (1, _) => TracingLevelFilter::WARN,
             // Use log level from file if no flags were provided to CLI
             (0, 0) => file_extended_options
                 .logging_level
-                .unwrap_or(LevelFilter::Info),
-            (_, 1) => LevelFilter::Debug,
-            (_, n) if n > 1 => LevelFilter::Trace,
+                .map(|filter| match filter {
+                    LevelFilter::Off => TracingLevelFilter::OFF,
+                    LevelFilter::Error => TracingLevelFilter::ERROR,
+                    LevelFilter::Warn => TracingLevelFilter::WARN,
+                    LevelFilter::Info => TracingLevelFilter::INFO,
+                    LevelFilter::Debug => TracingLevelFilter::DEBUG,
+                    LevelFilter::Trace => TracingLevelFilter::TRACE,
+                })
+                .unwrap_or(TracingLevelFilter::INFO),
+            (_, 1) => TracingLevelFilter::DEBUG,
+            (_, n) if n > 1 => TracingLevelFilter::TRACE,
             // compiler can't figure it out
             _ => unsafe { unreachable_unchecked() },
         };

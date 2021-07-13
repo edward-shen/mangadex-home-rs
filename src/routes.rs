@@ -10,11 +10,11 @@ use base64::DecodeError;
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use futures::Stream;
-use log::{debug, error, info, trace};
 use prometheus::{Encoder, TextEncoder};
 use serde::Deserialize;
 use sodiumoxide::crypto::box_::{open_precomputed, Nonce, PrecomputedKey, NONCEBYTES};
 use thiserror::Error;
+use tracing::{debug, error, info, trace};
 
 use crate::cache::{Cache, CacheKey, ImageMetadata, UpstreamError};
 use crate::client::{FetchResult, DEFAULT_HEADERS, HTTP_CLIENT};

@@ -1,7 +1,6 @@
 use std::sync::atomic::Ordering;
 use std::{io::BufReader, sync::Arc};
 
-use log::{debug, error, info, warn};
 use rustls::internal::pemfile::{certs, rsa_private_keys};
 use rustls::sign::{RSASigningKey, SigningKey};
 use rustls::Certificate;
@@ -9,6 +8,7 @@ use serde::de::{MapAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use serde_repr::Deserialize_repr;
 use sodiumoxide::crypto::box_::PrecomputedKey;
+use tracing::{debug, error, info, warn};
 use url::Url;
 
 use crate::config::{ClientSecret, Config, UnstableOptions, VALIDATE_TOKENS};

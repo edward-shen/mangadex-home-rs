@@ -1,6 +1,6 @@
-use log::{info, warn};
 use reqwest::StatusCode;
 use serde::Serialize;
+use tracing::{info, warn};
 
 use crate::config::ClientSecret;
 
