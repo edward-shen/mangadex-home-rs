@@ -54,3 +54,38 @@ server_settings:
   # the backend will infer it from where it was sent from, which may fail in the
   # presence of multiple IPs.
   # external_ip: ~
+
+# These settings are unique to the Rust client, and may be ignored or behave
+# differently from the official client.
+extended_options:
+  # Which cache type to use. By default, this is `on_disk`, but one can select
+  # `lfu` or `lru` to use a LFU or LRU in addition to the on-disk cache to
+  # improve lookup times. Generally speaking, using one is almost always better,
+  # but by how much depends on how much memory you let the node use, how large
+  # is your node, and which caching implementation you use.
+  # cache_type: on_disk
+
+  # The amount of memory the client should use when using an in-memory cache.
+  # This does nothing if only the on-disk cache is used.
+  # memory_quota: 0
+
+  # Whether or not to expose a prometheus endpoint at /metrics. This is a
+  # completely open endpoint, so best practice is to make sure this is only
+  # readable from the internal network.
+  # enable_metrics: false
+
+  # If you'd like to specify a different path location for the cache, you can do
+  # so here.
+  # cache_path: "./cache"
+
+  # What logging level to use. Valid options are "error", "warn", "info",
+  # "debug", "trace", and "off", which disables logging.
+  # logging_level: info
+
+  # Warning: Experimental. Will cause problems.
+  #
+  # Enables disk encryption where the key is stored in memory. In other words,
+  # when the MD@H program is stopped, all cached files are irrecoverable.
+  # Practically speaking, this isn't all too useful (and definitely hurts
+  # performance), but for peace of mind, this may be useful.
+  # ephemeral_disk_encryption: false
