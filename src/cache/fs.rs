@@ -104,7 +104,7 @@ async fn read_file(
             debug!("header bytes: {:x?}", nonce_bytes);
 
             maybe_header = Some(*XNonce::from_slice(&nonce_bytes));
-            reader = Some(Box::pin(BufReader::new(EncryptedDiskReader::new(
+            reader = Some(Box::pin(BufReader::new(EncryptedReader::new(
                 file,
                 XNonce::from_slice(XNonce::from_slice(&nonce_bytes)),
                 key,
@@ -138,12 +138,12 @@ async fn read_file(
     }
 }
 
-struct EncryptedDiskReader<R> {
+struct EncryptedReader<R> {
     file: Pin<Box<R>>,
     keystream: XChaCha20,
 }
 
-impl<R> EncryptedDiskReader<R> {
+impl<R> EncryptedReader<R> {
     fn new(file: R, nonce: &XNonce, key: &Key) -> Self {
         Self {
             file: Box::pin(file),
@@ -165,7 +165,7 @@ impl<R: AsyncBufRead + Send> MetadataFetch for R {
     }
 }
 
-impl<R: AsyncRead> AsyncRead for EncryptedDiskReader<R> {
+impl<R: AsyncRead> AsyncRead for EncryptedReader<R> {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
