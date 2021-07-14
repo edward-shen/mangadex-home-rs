@@ -331,26 +331,20 @@ impl AsyncWrite for EncryptedDiskWriter {
     }
 
     #[inline]
-    fn poll_flush(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Result<(), std::io::Error>> {
-        if self.buffer.is_empty() {
-            self.as_mut().file.as_mut().poll_flush(cx)
-        } else {
-            let pinned = Pin::into_inner(self);
-            while !pinned.buffer.is_empty() {
-                match pinned.file.as_mut().poll_write(cx, &pinned.buffer) {
-                    Poll::Ready(Ok(n)) => {
-                        pinned.buffer.drain(..n);
-                    }
-                    Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
-                    Poll::Pending => return Poll::Pending,
-                }
-            }
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), std::io::Error>> {
+        let pinned = Pin::into_inner(self);
 
-            Poll::Ready(Ok(()))
+        while !pinned.buffer.is_empty() {
+            match pinned.file.as_mut().poll_write(cx, &pinned.buffer) {
+                Poll::Ready(Ok(n)) => {
+                    pinned.buffer.drain(..n);
+                }
+                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                Poll::Pending => return Poll::Pending,
+            }
         }
+
+        pinned.file.as_mut().poll_flush(cx)
     }
 
     #[inline]
