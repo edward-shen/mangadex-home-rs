@@ -14,10 +14,11 @@ use actix_web::rt::{spawn, time, System};
 use actix_web::web::{self, Data};
 use actix_web::{App, HttpResponse, HttpServer};
 use cache::{Cache, DiskCache};
+use chacha20::Key;
 use config::Config;
 use parking_lot::RwLock;
 use rustls::{NoClientAuth, ServerConfig};
-use sodiumoxide::crypto::secretstream::gen_key;
+use sodiumoxide::crypto::stream::xchacha20::gen_key;
 use state::{RwLockServerState, ServerState};
 use stop::send_stop;
 use thiserror::Error;
@@ -96,7 +97,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     if config.ephemeral_disk_encryption {
         info!("Running with at-rest encryption!");
-        ENCRYPTION_KEY.set(gen_key()).unwrap();
+        ENCRYPTION_KEY
+            .set(*Key::from_slice(gen_key().as_ref()))
+            .unwrap();
     }
 
     if config.enable_metrics {

@@ -1,9 +1,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use super::{
-    Cache, CacheError, CacheKey, CacheStream, CallbackCache, ImageMetadata, InnerStream, MemStream,
-};
+use super::{Cache, CacheKey, CacheStream, CallbackCache, ImageMetadata, MemStream};
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures::FutureExt;
@@ -146,13 +144,9 @@ where
     ) -> Option<Result<(CacheStream, ImageMetadata), super::CacheError>> {
         match self.mem_cache.lock().now_or_never() {
             Some(mut mem_cache) => match mem_cache.get(key).map(|(bytes, metadata, _)| {
-                Ok((InnerStream::Memory(MemStream(bytes.clone())), *metadata))
+                Ok((CacheStream::Memory(MemStream(bytes.clone())), *metadata))
             }) {
-                Some(v) => Some(v.and_then(|(inner, metadata)| {
-                    CacheStream::new(inner, None)
-                        .map(|v| (v, metadata))
-                        .map_err(|_| CacheError::DecryptionFailure)
-                })),
+                Some(v) => Some(v),
                 None => self.inner.get(key).await,
             },
             None => self.inner.get(key).await,

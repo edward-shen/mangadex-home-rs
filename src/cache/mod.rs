@@ -8,12 +8,12 @@ use std::task::{Context, Poll};
 use actix_web::http::HeaderValue;
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
+use chacha20::Key;
 use chrono::{DateTime, FixedOffset};
 use futures::{Stream, StreamExt};
 use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
-use sodiumoxide::crypto::secretstream::{Header, Key, Pull, Stream as SecretStream};
 use thiserror::Error;
 use tokio::sync::mpsc::Sender;
 use tokio_util::codec::{BytesCodec, FramedRead};
@@ -231,56 +231,12 @@ impl<T: CallbackCache> CallbackCache for Arc<T> {
             .await
     }
 }
-
-pub struct CacheStream {
-    inner: InnerStream,
-    decrypt: Option<SecretStream<Pull>>,
-}
-
-impl CacheStream {
-    pub(self) fn new(inner: InnerStream, header: Option<Header>) -> Result<Self, ()> {
-        Ok(Self {
-            inner,
-            decrypt: header
-                .and_then(|header| {
-                    ENCRYPTION_KEY
-                        .get()
-                        .map(|key| SecretStream::init_pull(&header, key))
-                })
-                .transpose()?,
-        })
-    }
-}
-
-impl Stream for CacheStream {
-    type Item = CacheStreamItem;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.inner.poll_next_unpin(cx).map(|data| {
-            // False positive (`data`): https://link.eddie.sh/r1fXX
-            #[allow(clippy::option_if_let_else)]
-            if let Some(keystream) = self.decrypt.as_mut() {
-                data.map(|bytes_res| {
-                    bytes_res.and_then(|bytes| {
-                        keystream
-                            .pull(&bytes, None)
-                            .map(|(data, _tag)| Bytes::from(data))
-                            .map_err(|_| UpstreamError)
-                    })
-                })
-            } else {
-                data
-            }
-        })
-    }
-}
-
-pub(self) enum InnerStream {
+pub enum CacheStream {
     Memory(MemStream),
     Completed(FramedRead<Pin<Box<dyn MetadataFetch + Send>>, BytesCodec>),
 }
 
-impl From<CachedImage> for InnerStream {
+impl From<CachedImage> for CacheStream {
     fn from(image: CachedImage) -> Self {
         Self::Memory(MemStream(image.0))
     }
@@ -288,7 +244,7 @@ impl From<CachedImage> for InnerStream {
 
 type CacheStreamItem = Result<Bytes, UpstreamError>;
 
-impl Stream for InnerStream {
+impl Stream for CacheStream {
     type Item = CacheStreamItem;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {

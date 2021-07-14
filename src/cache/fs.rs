@@ -14,7 +14,6 @@
 //! upstream no longer needs to process duplicate requests and sequential cache
 //! misses are treated as closer as a cache hit.
 
-use std::convert::TryInto;
 use std::error::Error;
 use std::fmt::Display;
 use std::io::{Seek, SeekFrom};
@@ -25,11 +24,11 @@ use std::task::{Context, Poll};
 use actix_web::error::PayloadError;
 use async_trait::async_trait;
 use bytes::Bytes;
+use chacha20::cipher::{NewCipher, StreamCipher};
+use chacha20::{Key, XChaCha20, XNonce};
 use futures::Future;
-use serde::{Deserialize, Serialize};
-use sodiumoxide::crypto::secretstream::{
-    Header, Pull, Push, Stream as SecretStream, Tag, HEADERBYTES,
-};
+use serde::Deserialize;
+use sodiumoxide::crypto::stream::xchacha20::{gen_nonce, NONCEBYTES};
 use tokio::fs::{create_dir_all, remove_file, File};
 use tokio::io::{
     AsyncBufRead, AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, BufReader,
@@ -40,13 +39,7 @@ use tokio_util::codec::{BytesCodec, FramedRead};
 use tracing::{debug, instrument, warn};
 
 use super::compat::LegacyImageMetadata;
-use super::{CacheKey, ImageMetadata, InnerStream, ENCRYPTION_KEY};
-
-#[derive(Serialize, Deserialize)]
-pub enum OnDiskMetadata {
-    Encrypted(Header, ImageMetadata),
-    Plaintext(ImageMetadata),
-}
+use super::{CacheKey, CacheStream, ImageMetadata, ENCRYPTION_KEY};
 
 /// Attempts to lookup the file on disk, returning a byte stream if it exists.
 /// Note that this could return two types of streams, depending on if the file
@@ -54,14 +47,14 @@ pub enum OnDiskMetadata {
 #[inline]
 pub(super) async fn read_file_from_path(
     path: &Path,
-) -> Option<Result<(InnerStream, Option<Header>, ImageMetadata), std::io::Error>> {
+) -> Option<Result<(CacheStream, Option<XNonce>, ImageMetadata), std::io::Error>> {
     read_file(std::fs::File::open(path).ok()?).await
 }
 
 #[instrument(level = "debug")]
 async fn read_file(
     file: std::fs::File,
-) -> Option<Result<(InnerStream, Option<Header>, ImageMetadata), std::io::Error>> {
+) -> Option<Result<(CacheStream, Option<XNonce>, ImageMetadata), std::io::Error>> {
     let mut file_0 = file.try_clone().unwrap();
     let file_1 = file.try_clone().unwrap();
 
@@ -102,31 +95,20 @@ async fn read_file(
         // If the encryption key was set, use the encrypted disk reader instead;
         // else, just directly read from file.
         if let Some(key) = ENCRYPTION_KEY.get() {
-            let mut header_bytes = [0; HEADERBYTES];
-            if let Err(e) = file.read_exact(&mut header_bytes).await {
+            let mut nonce_bytes = [0; NONCEBYTES];
+            if let Err(e) = file.read_exact(&mut nonce_bytes).await {
                 warn!("Found file but failed reading header: {}", e);
                 return None;
             }
 
-            debug!("header bytes: {:x?}", header_bytes);
+            debug!("header bytes: {:x?}", nonce_bytes);
 
-            let file_header = if let Some(header) = Header::from_slice(&header_bytes) {
-                header
-            } else {
-                warn!("Found file, but encrypted header was invalid. Assuming corrupted!");
-                return None;
-            };
-
-            let secret_stream = if let Ok(stream) = SecretStream::init_pull(&file_header, key) {
-                debug!("Valid header found!");
-                stream
-            } else {
-                warn!("Failed to init secret stream with key and header. Assuming corrupted!");
-                return None;
-            };
-
-            maybe_header = Some(file_header);
-            reader = Some(Box::pin(EncryptedDiskReader::new(file, secret_stream)));
+            maybe_header = Some(*XNonce::from_slice(&nonce_bytes));
+            reader = Some(Box::pin(BufReader::new(EncryptedDiskReader::new(
+                file,
+                XNonce::from_slice(&XNonce::from_slice(&nonce_bytes)),
+                key,
+            ))));
         }
 
         parsed_metadata = if let Some(reader) = reader.as_mut() {
@@ -151,7 +133,7 @@ async fn read_file(
 
     if let Some(reader) = reader {
         let stream =
-            InnerStream::Completed(FramedRead::new(reader as Pin<Box<_>>, BytesCodec::new()));
+            CacheStream::Completed(FramedRead::new(reader as Pin<Box<_>>, BytesCodec::new()));
         parsed_metadata.map(|metadata| Ok((stream, maybe_header, metadata)))
     } else {
         debug!("Reader was invalid, file is corrupt");
@@ -161,21 +143,14 @@ async fn read_file(
 
 struct EncryptedDiskReader {
     file: Pin<Box<File>>,
-    stream: SecretStream<Pull>,
-    // Bytes we read from the secret stream
-    read_buffer: Box<[u8; 4096]>,
-    read_data: Vec<u8>,
-    decryption_buffer: Vec<u8>,
+    keystream: XChaCha20,
 }
 
 impl EncryptedDiskReader {
-    fn new(file: File, stream: SecretStream<Pull>) -> Self {
+    fn new(file: File, nonce: &XNonce, key: &Key) -> Self {
         Self {
             file: Box::pin(file),
-            stream,
-            read_buffer: Box::new([0; 4096]),
-            read_data: Vec::with_capacity(4096),
-            decryption_buffer: Vec::with_capacity(4096),
+            keystream: XChaCha20::new(key, nonce),
         }
     }
 }
@@ -199,91 +174,13 @@ impl AsyncRead for EncryptedDiskReader {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
-        let buf_res = match self.as_mut().poll_fill_buf(cx) {
-            Poll::Ready(Ok(bytes)) => bytes,
-            Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
-            Poll::Pending => return Poll::Pending,
-        };
-        let size = buf.capacity().min(buf_res.len());
-        buf.put_slice(&buf_res[..size]);
-        self.as_mut().consume(size);
-        Poll::Ready(Ok(()))
-    }
-}
-
-impl AsyncBufRead for EncryptedDiskReader {
-    fn poll_fill_buf(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<&[u8]>> {
-        let pinned_self = Pin::into_inner(self);
-        let mut read_buf = ReadBuf::new(pinned_self.read_buffer.as_mut());
-
-        // // Load content from the leftovers
-        // read_buf.put_slice(&pinned_self.read_leftovers);
-
-        let msg = loop {
-            let prev_len = read_buf.filled().len();
-            // First, try and read from the underlying file.
-            let read_res = pinned_self.file.as_mut().poll_read(cx, &mut read_buf);
-
-            // Wait until we have something to read
-            if read_res.is_pending() {
-                dbg!(line!());
-                return Poll::Pending;
-            }
-
-            if prev_len == read_buf.filled().len() && pinned_self.read_data.is_empty() {
-                dbg!(line!());
-                return Poll::Ready(Ok(&[]));
-            }
-
-            pinned_self.read_data.extend_from_slice(read_buf.filled());
-
-            if dbg!(pinned_self.read_data.len()) >= std::mem::size_of::<usize>() {
-                let (size, rest) = pinned_self.read_data.split_at(std::mem::size_of::<usize>());
-                let size = usize::from_le_bytes(size.try_into().unwrap());
-                if dbg!(size) <= dbg!(rest.len()) {
-                    let (data, leftovers) = rest.split_at(size);
-                    // Extract data into their own vec
-                    let data = data.to_vec();
-
-                    // temporarily store leftovers in decryption buffer,
-                    // then move leftovers back into read_data.
-                    // This is to avoid an alloc
-                    pinned_self.decryption_buffer.clear();
-                    pinned_self.decryption_buffer.extend_from_slice(&leftovers);
-                    pinned_self.read_data.clear();
-                    pinned_self
-                        .read_data
-                        .extend_from_slice(&pinned_self.decryption_buffer);
-                    dbg!(line!());
-                    break data;
-                }
-            }
-        };
-
-        debug!("read message of size {:?}", msg.len());
-        debug!("First 5 bytes {:x?}", &msg[..5]);
-        debug!("Last 5 bytes {:x?}", &msg[msg.len() - 5..]);
-
-        if pinned_self
-            .stream
-            .pull_to_vec(&msg, None, &mut pinned_self.decryption_buffer)
-            .is_err()
-        {
-            dbg!(line!());
-            return Poll::Ready(Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "Failed to decrypt data",
-            )));
-        }
-
-        // debug!("decrypted read: {:x?}", &pinned_self.decryption_buffer);
-
-        dbg!(line!());
-        Poll::Ready(Ok(&pinned_self.decryption_buffer))
-    }
-
-    fn consume(mut self: Pin<&mut Self>, amt: usize) {
-        self.as_mut().decryption_buffer.drain(..amt);
+        let previously_read = buf.filled().len();
+        let res = self.as_mut().file.as_mut().poll_read(cx, buf);
+        let bytes_modified = buf.filled().len() - previously_read;
+        self.keystream.apply_keystream(
+            &mut buf.filled_mut()[previously_read..previously_read + bytes_modified],
+        );
+        res
     }
 }
 
@@ -298,14 +195,12 @@ impl<'a, R: AsyncBufRead> Future for MetadataFuture<'a, R> {
             let buf = match self.0.as_mut().poll_fill_buf(cx) {
                 Poll::Ready(Ok(buffer)) => buffer,
                 Poll::Ready(Err(e)) => {
-                    dbg!(e);
                     return Poll::Ready(Err(()));
                 }
                 Poll::Pending => return Poll::Pending,
             };
 
             if filled == buf.len() {
-                dbg!(line!());
                 return Poll::Ready(Err(()));
             } else {
                 filled = buf.len();
@@ -318,7 +213,6 @@ impl<'a, R: AsyncBufRead> Future for MetadataFuture<'a, R> {
                     continue;
                 }
                 Some(Err(_)) | None => {
-                    dbg!(line!());
                     return Poll::Ready(Err(()));
                 }
             };
@@ -354,12 +248,14 @@ where
         file
     };
 
-    let mut writer: Pin<Box<dyn AsyncWrite + Send>> = if let Some((enc, header)) = ENCRYPTION_KEY
-        .get()
-        .map(|key| SecretStream::init_push(key).expect("Failed to init enc stream"))
-    {
-        file.write_all(header.as_ref()).await?;
-        Box::pin(EncryptedDiskWriter::new(file, enc))
+    let mut writer: Pin<Box<dyn AsyncWrite + Send>> = if let Some(key) = ENCRYPTION_KEY.get() {
+        let nonce = gen_nonce();
+        file.write_all(nonce.as_ref()).await?;
+        Box::pin(EncryptedDiskWriter::new(
+            file,
+            XNonce::from_slice(nonce.as_ref()),
+            key,
+        ))
     } else {
         Box::pin(file)
     };
@@ -401,126 +297,76 @@ where
 
 struct EncryptedDiskWriter {
     file: Pin<Box<File>>,
-    stream: Option<SecretStream<Push>>,
-    encryption_buffer: Vec<u8>,
-    write_buffer: Vec<u8>,
+    keystream: XChaCha20,
+    buffer: Vec<u8>,
 }
 
 impl EncryptedDiskWriter {
-    fn new(file: File, stream: SecretStream<Push>) -> Self {
+    fn new(file: File, nonce: &XNonce, key: &Key) -> Self {
         Self {
             file: Box::pin(file),
-            stream: Some(stream),
-            encryption_buffer: vec![],
-            write_buffer: vec![],
+            keystream: XChaCha20::new(key, nonce),
+            buffer: vec![],
         }
     }
 }
 
 impl AsyncWrite for EncryptedDiskWriter {
+    #[inline]
     fn poll_write(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<Result<usize, std::io::Error>> {
-        let new_self = Pin::into_inner(self);
+        let pinned = Pin::into_inner(self);
 
-        if let Some(stream) = new_self.stream.as_mut() {
-            stream
-                .push_to_vec(buf, None, Tag::Message, &mut new_self.encryption_buffer)
-                .expect("Failed to write encrypted data to buffer");
-        }
-
-        new_self
-            .write_buffer
-            .extend_from_slice(&new_self.encryption_buffer.len().to_le_bytes());
-        new_self.write_buffer.extend(&new_self.encryption_buffer);
-
-        match new_self
-            .file
-            .as_mut()
-            .poll_write(cx, &new_self.write_buffer)
-        {
+        let old_buffer_size = pinned.buffer.len();
+        pinned.buffer.extend_from_slice(buf);
+        pinned
+            .keystream
+            .apply_keystream(&mut pinned.buffer[old_buffer_size..]);
+        match pinned.file.as_mut().poll_write(cx, &pinned.buffer) {
             Poll::Ready(Ok(n)) => {
-                let bytes_written = new_self.write_buffer.drain(..n).collect::<Vec<_>>();
-                debug!(
-                    "wrote message of size {:?}",
-                    bytes_written.len() - std::mem::size_of::<usize>()
-                );
-                debug!(
-                    "First 5 bytes {:x?}",
-                    &bytes_written[std::mem::size_of::<usize>()..std::mem::size_of::<usize>() + 5]
-                );
-                debug!(
-                    "Last 5 bytes {:x?}",
-                    &bytes_written[bytes_written.len() - 5..]
-                );
-                // We buffered all the bytes that were provided to use.
+                pinned.buffer.drain(..n);
                 Poll::Ready(Ok(buf.len()))
             }
-            poll => poll,
+            Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
+            Poll::Pending => Poll::Pending,
         }
     }
 
+    #[inline]
     fn poll_flush(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), std::io::Error>> {
-        if self.as_ref().write_buffer.is_empty() {
-            self.file.as_mut().poll_flush(cx)
+        if self.buffer.is_empty() {
+            self.as_mut().file.as_mut().poll_flush(cx)
         } else {
-            let new_self = Pin::into_inner(self);
-
-            // Write as many bytes that we can immediately write
-            loop {
-                match new_self
-                    .file
-                    .as_mut()
-                    .poll_write(cx, &new_self.write_buffer)
-                {
+            let pinned = Pin::into_inner(self);
+            while !pinned.buffer.is_empty() {
+                match pinned.file.as_mut().poll_write(cx, &pinned.buffer) {
                     Poll::Ready(Ok(n)) => {
-                        let bytes_written = new_self.write_buffer.drain(..n).collect::<Vec<_>>();
-                        debug!(
-                            "wrote message of size {:?}",
-                            bytes_written.len() - std::mem::size_of::<usize>()
-                        );
-
-                        // We buffered all the bytes that were provided to use.
-                        if new_self.write_buffer.is_empty() {
-                            return Poll::Ready(Ok(()));
-                        }
+                        pinned.buffer.drain(..n);
                     }
-                    poll => return poll.map(|res| res.map(|_| ())),
+                    Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                    Poll::Pending => return Poll::Pending,
                 }
             }
+
+            Poll::Ready(Ok(()))
         }
     }
 
+    #[inline]
     fn poll_shutdown(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), std::io::Error>> {
-        let maybe_bytes = self
-            .as_mut()
-            .stream
-            .take()
-            .map(|stream| stream.finalize(None));
-
-        // If we've yet to finalize the stream, finalize it and add the bytes to
-        // our writer buffer.
-        if let Some(Ok(bytes)) = maybe_bytes {
-            // We just need to push it into the buffer, we don't really care
-            // about the result, since we can check later
-            let _ = self.as_mut().write_buffer.extend_from_slice(&bytes);
+        match self.as_mut().poll_flush(cx) {
+            Poll::Ready(Ok(())) => self.as_mut().file.as_mut().poll_shutdown(cx),
+            poll => poll,
         }
-
-        // Now wait for us to fully flush out our write buffer
-        if self.as_mut().poll_flush(cx).is_pending() {
-            return Poll::Pending;
-        }
-
-        // Write buffer is empty, flush file
-        self.file.as_mut().poll_shutdown(cx)
     }
 }
 
