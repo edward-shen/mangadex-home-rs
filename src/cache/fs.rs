@@ -152,19 +152,6 @@ impl<R> EncryptedReader<R> {
     }
 }
 
-#[async_trait]
-pub trait MetadataFetch: AsyncBufRead {
-    async fn metadata(mut self: Pin<&mut Self>) -> Result<ImageMetadata, ()>;
-}
-
-#[async_trait]
-impl<R: AsyncBufRead + Send> MetadataFetch for R {
-    #[inline]
-    async fn metadata(mut self: Pin<&mut Self>) -> Result<ImageMetadata, ()> {
-        MetadataFuture(self).await
-    }
-}
-
 impl<R: AsyncRead> AsyncRead for EncryptedReader<R> {
     fn poll_read(
         mut self: Pin<&mut Self>,
@@ -178,6 +165,19 @@ impl<R: AsyncRead> AsyncRead for EncryptedReader<R> {
             &mut buf.filled_mut()[previously_read..previously_read + bytes_modified],
         );
         res
+    }
+}
+
+#[async_trait]
+pub trait MetadataFetch: AsyncBufRead {
+    async fn metadata(mut self: Pin<&mut Self>) -> Result<ImageMetadata, ()>;
+}
+
+#[async_trait]
+impl<R: AsyncBufRead + Send> MetadataFetch for R {
+    #[inline]
+    async fn metadata(mut self: Pin<&mut Self>) -> Result<ImageMetadata, ()> {
+        MetadataFuture(self).await
     }
 }
 
