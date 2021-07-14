@@ -158,10 +158,11 @@ impl<R: AsyncRead> AsyncRead for EncryptedReader<R> {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
+        let mut pinned = self.as_mut();
         let previously_read = buf.filled().len();
-        let res = self.as_mut().file.as_mut().poll_read(cx, buf);
+        let res = pinned.file.as_mut().poll_read(cx, buf);
         let bytes_modified = buf.filled().len() - previously_read;
-        self.keystream.apply_keystream(
+        pinned.keystream.apply_keystream(
             &mut buf.filled_mut()[previously_read..previously_read + bytes_modified],
         );
         res
@@ -214,7 +215,7 @@ impl<'a, R: AsyncBufRead> Future for MetadataFuture<'a, R> {
 
             // This needs to be outside the loop because we need to drop the
             // reader ref, since that depends on a mut self.
-            pinned.as_mut().consume(dbg!(bytes_consumed));
+            pinned.as_mut().consume(bytes_consumed);
             return res;
         }
     }
@@ -326,7 +327,9 @@ impl AsyncWrite for EncryptedDiskWriter {
                 Poll::Ready(Ok(buf.len()))
             }
             Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
-            Poll::Pending => Poll::Pending,
+            // We have written the data to our buffer, even if we haven't
+            // couldn't write the file to disk.
+            Poll::Pending => Poll::Ready(Ok(buf.len())),
         }
     }
 
