@@ -106,21 +106,18 @@ async fn read_file(
             maybe_header = Some(*XNonce::from_slice(&nonce_bytes));
             reader = Some(Box::pin(BufReader::new(EncryptedDiskReader::new(
                 file,
-                XNonce::from_slice(&XNonce::from_slice(&nonce_bytes)),
+                XNonce::from_slice(XNonce::from_slice(&nonce_bytes)),
                 key,
             ))));
         }
 
         parsed_metadata = if let Some(reader) = reader.as_mut() {
-            match reader.as_mut().metadata().await {
-                Ok(metadata) => {
-                    debug!("Successfully parsed encrypted metadata");
-                    Some(metadata)
-                }
-                Err(_) => {
-                    debug!("Failed to parse encrypted metadata");
-                    None
-                }
+            if let Ok(metadata) = reader.as_mut().metadata().await {
+                debug!("Successfully parsed encrypted metadata");
+                Some(metadata)
+            } else {
+                debug!("Failed to parse encrypted metadata");
+                None
             }
         } else {
             debug!("Failed to read encrypted data");
@@ -194,32 +191,26 @@ impl<'a, R: AsyncBufRead> Future for MetadataFuture<'a, R> {
         loop {
             let buf = match self.0.as_mut().poll_fill_buf(cx) {
                 Poll::Ready(Ok(buffer)) => buffer,
-                Poll::Ready(Err(e)) => {
-                    return Poll::Ready(Err(()));
-                }
+                Poll::Ready(Err(_)) => return Poll::Ready(Err(())),
                 Poll::Pending => return Poll::Pending,
             };
 
             if filled == buf.len() {
                 return Poll::Ready(Err(()));
-            } else {
-                filled = buf.len();
             }
+
+            filled = buf.len();
 
             let mut reader = serde_json::Deserializer::from_slice(buf).into_iter();
             let (res, bytes_consumed) = match reader.next() {
                 Some(Ok(metadata)) => (Poll::Ready(Ok(metadata)), reader.byte_offset()),
-                Some(Err(e)) if e.is_eof() => {
-                    continue;
-                }
-                Some(Err(_)) | None => {
-                    return Poll::Ready(Err(()));
-                }
+                Some(Err(e)) if e.is_eof() => continue,
+                Some(Err(_)) | None => return Poll::Ready(Err(())),
             };
 
             // This needs to be outside the loop because we need to drop the
             // reader ref, since that depends on a mut self.
-            self.0.as_mut().consume(dbg!(bytes_consumed));
+            self.0.as_mut().consume(bytes_consumed);
             return res;
         }
     }

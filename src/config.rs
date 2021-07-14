@@ -102,17 +102,18 @@ impl Config {
             (2, _) => TracingLevelFilter::ERROR,
             (1, _) => TracingLevelFilter::WARN,
             // Use log level from file if no flags were provided to CLI
-            (0, 0) => file_extended_options
-                .logging_level
-                .map(|filter| match filter {
-                    LevelFilter::Off => TracingLevelFilter::OFF,
-                    LevelFilter::Error => TracingLevelFilter::ERROR,
-                    LevelFilter::Warn => TracingLevelFilter::WARN,
-                    LevelFilter::Info => TracingLevelFilter::INFO,
-                    LevelFilter::Debug => TracingLevelFilter::DEBUG,
-                    LevelFilter::Trace => TracingLevelFilter::TRACE,
-                })
-                .unwrap_or(TracingLevelFilter::INFO),
+            (0, 0) => {
+                file_extended_options
+                    .logging_level
+                    .map_or(TracingLevelFilter::INFO, |filter| match filter {
+                        LevelFilter::Off => TracingLevelFilter::OFF,
+                        LevelFilter::Error => TracingLevelFilter::ERROR,
+                        LevelFilter::Warn => TracingLevelFilter::WARN,
+                        LevelFilter::Info => TracingLevelFilter::INFO,
+                        LevelFilter::Debug => TracingLevelFilter::DEBUG,
+                        LevelFilter::Trace => TracingLevelFilter::TRACE,
+                    })
+            }
             (_, 1) => TracingLevelFilter::DEBUG,
             (_, n) if n > 1 => TracingLevelFilter::TRACE,
             // compiler can't figure it out
