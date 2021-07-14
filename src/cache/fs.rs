@@ -138,13 +138,13 @@ async fn read_file(
     }
 }
 
-struct EncryptedDiskReader {
-    file: Pin<Box<File>>,
+struct EncryptedDiskReader<R> {
+    file: Pin<Box<R>>,
     keystream: XChaCha20,
 }
 
-impl EncryptedDiskReader {
-    fn new(file: File, nonce: &XNonce, key: &Key) -> Self {
+impl<R> EncryptedDiskReader<R> {
+    fn new(file: R, nonce: &XNonce, key: &Key) -> Self {
         Self {
             file: Box::pin(file),
             keystream: XChaCha20::new(key, nonce),
@@ -165,7 +165,7 @@ impl<R: AsyncBufRead + Send> MetadataFetch for R {
     }
 }
 
-impl AsyncRead for EncryptedDiskReader {
+impl<R: AsyncRead> AsyncRead for EncryptedDiskReader<R> {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
