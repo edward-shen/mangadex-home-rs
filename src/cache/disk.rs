@@ -378,6 +378,7 @@ mod db {
     use super::*;
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn get() -> Result<(), Box<dyn Error>> {
         let (cache, _) = DiskCache::in_memory();
         let path = PathBuf::from_str("a/b/c")?;
@@ -409,6 +410,7 @@ mod db {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn put() -> Result<(), Box<dyn Error>> {
         let (cache, _) = DiskCache::in_memory();
         let path = PathBuf::from_str("a/b/c")?;

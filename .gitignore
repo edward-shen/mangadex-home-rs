@@ -5,3 +5,4 @@ flamegraph*.svg
 perf.data*
 dhat.out.*
 settings.yaml
+tarpaulin-report.html
