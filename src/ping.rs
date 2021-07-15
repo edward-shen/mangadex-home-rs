@@ -1,3 +1,4 @@
+use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::Ordering;
 use std::{io::BufReader, sync::Arc};
 
@@ -29,19 +30,24 @@ pub struct Request<'a> {
     network_speed: BytesPerSecond,
     build_version: usize,
     tls_created_at: Option<String>,
+    ip_address: Option<IpAddr>,
 }
 
 impl<'a> Request<'a> {
     fn from_config_and_state(secret: &'a ClientSecret, config: &Config) -> Self {
         Self {
             secret,
-            port: config.port,
+            port: config
+                .external_address
+                .and_then(|v| Port::new(v.port()))
+                .unwrap_or(config.port),
             disk_space: config.disk_quota,
             network_speed: config.network_speed.into(),
             build_version: CLIENT_API_VERSION,
             tls_created_at: TLS_PREVIOUSLY_CREATED
                 .get()
                 .map(|v| v.load().as_ref().clone()),
+            ip_address: config.external_address.as_ref().map(SocketAddr::ip),
         }
     }
 }
@@ -50,11 +56,15 @@ impl<'a> From<(&'a ClientSecret, &Config)> for Request<'a> {
     fn from((secret, config): (&'a ClientSecret, &Config)) -> Self {
         Self {
             secret,
-            port: config.port,
+            port: config
+                .external_address
+                .and_then(|v| Port::new(v.port()))
+                .unwrap_or(config.port),
             disk_space: config.disk_quota,
             network_speed: config.network_speed.into(),
             build_version: CLIENT_API_VERSION,
             tls_created_at: None,
+            ip_address: config.external_address.as_ref().map(SocketAddr::ip),
         }
     }
 }

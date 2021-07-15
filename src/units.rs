@@ -13,7 +13,6 @@ impl Port {
         self.0.get()
     }
 
-    #[cfg(test)]
     pub fn new(amt: u16) -> Option<Self> {
         NonZeroU16::new(amt).map(Self)
     }
