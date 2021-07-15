@@ -20,13 +20,13 @@ init_counters!(
     (
         CACHE_HIT_COUNTER,
         IntCounter,
-        "cache_hit",
+        "cache_hit_total",
         "The number of cache hits."
     ),
     (
         CACHE_MISS_COUNTER,
         IntCounter,
-        "cache_miss",
+        "cache_miss_total",
         "The number of cache misses."
     ),
     (
@@ -38,19 +38,19 @@ init_counters!(
     (
         REQUESTS_DATA_COUNTER,
         IntCounter,
-        "requests_data",
+        "requests_data_total",
         "The number of requests served from the /data endpoint."
     ),
     (
         REQUESTS_DATA_SAVER_COUNTER,
         IntCounter,
-        "requests_data_saver",
+        "requests_data_saver_total",
         "The number of requests served from the /data-saver endpoint."
     ),
     (
         REQUESTS_OTHER_COUNTER,
         IntCounter,
-        "requests_other",
+        "requests_other_total",
         "The total number of request not served by primary endpoints."
     ),
 );
