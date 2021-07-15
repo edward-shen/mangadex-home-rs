@@ -111,7 +111,7 @@ pub async fn load_geo_ip_data(license_key: ClientSecret) -> Result<(), DbLoadErr
             }
         })
         .unwrap_or(SystemTime::UNIX_EPOCH);
-    let duration = match SystemTime::now().duration_since(dbg!(db_date_created)) {
+    let duration = match SystemTime::now().duration_since(db_date_created) {
         Ok(time) => Duration::from_std(time).expect("duration to fit"),
         Err(_) => {
             warn!("Clock may have gone backwards?");

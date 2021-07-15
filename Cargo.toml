@@ -4,7 +4,14 @@ version = "0.5.0"
 license = "GPL-3.0-or-later"
 authors = ["Edward Shen <code@eddie.sh>"]
 edition = "2018"
-include = ["src/**/*", "db_queries", "LICENSE", "README.md", "sqlx-data.json"]
+include = [
+  "src/**/*",
+  "db_queries",
+  "LICENSE",
+  "README.md",
+  "sqlx-data.json",
+  "settings.sample.yaml"
+]
 description = "A MangaDex@Home implementation in Rust."
 repository = "https://github.com/edward-shen/mangadex-home-rs"
 

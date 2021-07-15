@@ -260,31 +260,35 @@ impl Display for InvalidCombination {
 impl Error for InvalidCombination {}
 
 fn print_preamble_and_warnings(args: &Config) -> Result<(), Box<dyn Error>> {
-    println!(concat!(
-        env!("CARGO_PKG_NAME"),
-        " ",
-        env!("CARGO_PKG_VERSION"),
-        " (",
-        env!("VERGEN_GIT_SHA_SHORT"),
-        ")",
-        "  Copyright (C) 2021  ",
-        env!("CARGO_PKG_AUTHORS"),
-        "\n\n",
-        env!("CARGO_PKG_NAME"),
-        " is free software: you can redistribute it and/or modify\n\
-        it under the terms of the GNU General Public License as published by\n\
-        the Free Software Foundation, either version 3 of the License, or\n\
-        (at your option) any later version.\n\n",
-        env!("CARGO_PKG_NAME"),
-        " is distributed in the hope that it will be useful,\n\
-        but WITHOUT ANY WARRANTY; without even the implied warranty of\n\
-        MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the\n\
-        GNU General Public License for more details.\n\n\
-        You should have received a copy of the GNU General Public License\n\
-        along with ",
-        env!("CARGO_PKG_NAME"),
-        ". If not, see <https://www.gnu.org/licenses/>.\n"
-    ));
+    let build_string = option_env!("VERGEN_GIT_SHA_SHORT")
+        .map(|git_sha| format!(" ({})", git_sha))
+        .unwrap_or_default();
+
+    println!(
+        concat!(
+            env!("CARGO_PKG_NAME"),
+            " ",
+            env!("CARGO_PKG_VERSION"),
+            "{}  Copyright (C) 2021  ",
+            env!("CARGO_PKG_AUTHORS"),
+            "\n\n",
+            env!("CARGO_PKG_NAME"),
+            " is free software: you can redistribute it and/or modify\n\
+            it under the terms of the GNU General Public License as published by\n\
+            the Free Software Foundation, either version 3 of the License, or\n\
+            (at your option) any later version.\n\n",
+            env!("CARGO_PKG_NAME"),
+            " is distributed in the hope that it will be useful,\n\
+            but WITHOUT ANY WARRANTY; without even the implied warranty of\n\
+            MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the\n\
+            GNU General Public License for more details.\n\n\
+            You should have received a copy of the GNU General Public License\n\
+            along with ",
+            env!("CARGO_PKG_NAME"),
+            ". If not, see <https://www.gnu.org/licenses/>.\n"
+        ),
+        build_string
+    );
 
     if args.ephemeral_disk_encryption {
         error!("Encrypted files are _very_ broken; caveat emptor!");
