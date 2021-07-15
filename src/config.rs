@@ -301,8 +301,11 @@ struct CliArgs {
     /// respectively.
     #[clap(short, long, parse(from_occurrences), conflicts_with = "verbose")]
     pub quiet: usize,
+    /// Unstable options. Intentionally not documented.
     #[clap(short = 'Z', long)]
     pub unstable_options: Vec<UnstableOptions>,
+    /// Override the image server with the one provided. Do not set this unless
+    /// you know what you're doing.
     #[clap(long)]
     pub override_upstream: Option<Url>,
     /// Enables ephemeral disk encryption. Items written to disk are first
@@ -310,8 +313,11 @@ struct CliArgs {
     /// performance, privacy, and usability with this flag enabled.
     #[clap(short, long)]
     pub ephemeral_disk_encryption: bool,
+    /// The path to the config file. Default value is `./settings.yaml`.
     #[clap(short, long)]
     pub config_path: Option<PathBuf>,
+    /// Whether to use an in-memory cache in addition to the disk cache. Default
+    /// value is "on_disk", other options are "lfu" and "lru".
     #[clap(short = 't', long)]
     pub cache_type: Option<CacheType>,
 }
