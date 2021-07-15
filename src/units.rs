@@ -38,7 +38,7 @@ impl Display for Port {
     }
 }
 
-#[derive(Copy, Clone, Serialize, Deserialize, Default, Debug, Hash, Eq, PartialEq)]
+#[derive(Copy, Clone, Deserialize, Default, Debug, Hash, Eq, PartialEq)]
 pub struct Mebibytes(usize);
 
 impl Mebibytes {
@@ -56,6 +56,7 @@ impl FromStr for Mebibytes {
     }
 }
 
+#[derive(Serialize, Debug)]
 pub struct Bytes(pub usize);
 
 impl Bytes {

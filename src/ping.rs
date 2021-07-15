@@ -17,7 +17,7 @@ use crate::state::{
     RwLockServerState, PREVIOUSLY_COMPROMISED, PREVIOUSLY_PAUSED, TLS_CERTS,
     TLS_PREVIOUSLY_CREATED, TLS_SIGNING_KEY,
 };
-use crate::units::{BytesPerSecond, Mebibytes, Port};
+use crate::units::{Bytes, BytesPerSecond, Port};
 use crate::CLIENT_API_VERSION;
 
 pub const CONTROL_CENTER_PING_URL: &str = "https://api.mangadex.network/ping";
@@ -26,7 +26,7 @@ pub const CONTROL_CENTER_PING_URL: &str = "https://api.mangadex.network/ping";
 pub struct Request<'a> {
     secret: &'a ClientSecret,
     port: Port,
-    disk_space: Mebibytes,
+    disk_space: Bytes,
     network_speed: BytesPerSecond,
     build_version: usize,
     tls_created_at: Option<String>,
@@ -41,7 +41,7 @@ impl<'a> Request<'a> {
                 .external_address
                 .and_then(|v| Port::new(v.port()))
                 .unwrap_or(config.port),
-            disk_space: config.disk_quota,
+            disk_space: config.disk_quota.into(),
             network_speed: config.network_speed.into(),
             build_version: CLIENT_API_VERSION,
             tls_created_at: TLS_PREVIOUSLY_CREATED
@@ -60,7 +60,7 @@ impl<'a> From<(&'a ClientSecret, &Config)> for Request<'a> {
                 .external_address
                 .and_then(|v| Port::new(v.port()))
                 .unwrap_or(config.port),
-            disk_space: config.disk_quota,
+            disk_space: config.disk_quota.into(),
             network_speed: config.network_speed.into(),
             build_version: CLIENT_API_VERSION,
             tls_created_at: None,
@@ -179,6 +179,7 @@ pub async fn update_server_state(
     let req = Request::from_config_and_state(secret, cli);
     debug!("Sending ping request: {:?}", req);
     let client = reqwest::Client::new();
+    dbg!(serde_json::to_string(&req).unwrap());
     let resp = client.post(CONTROL_CENTER_PING_URL).json(&req).send().await;
     match resp {
         Ok(resp) => match resp.json::<Response>().await {
