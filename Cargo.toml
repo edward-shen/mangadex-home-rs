@@ -1,6 +1,6 @@
 [package]
 name = "mangadex-home"
-version = "0.5.1"
+version = "0.5.2"
 license = "GPL-3.0-or-later"
 authors = ["Edward Shen <code@eddie.sh>"]
 edition = "2018"
@@ -16,8 +16,8 @@ description = "A MangaDex@Home implementation in Rust."
 repository = "https://github.com/edward-shen/mangadex-home-rs"
 
 [profile.release]
-# lto = true
-# codegen-units = 1
+lto = true
+codegen-units = 1
 debug = 1
 
 [dependencies]
