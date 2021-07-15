@@ -179,7 +179,6 @@ pub async fn update_server_state(
     let req = Request::from_config_and_state(secret, cli);
     debug!("Sending ping request: {:?}", req);
     let client = reqwest::Client::new();
-    dbg!(serde_json::to_string(&req).unwrap());
     let resp = client.post(CONTROL_CENTER_PING_URL).json(&req).send().await;
     match resp {
         Ok(resp) => match resp.json::<Response>().await {
