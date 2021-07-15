@@ -125,7 +125,7 @@ pub async fn default(state: Data<RwLockServerState>, req: HttpRequest) -> impl R
 }
 
 #[allow(clippy::future_not_send, clippy::unused_async)]
-#[get("/metrics")]
+#[get("/prometheus")]
 pub async fn metrics() -> impl Responder {
     let metric_families = prometheus::gather();
     let mut buffer = Vec::new();
