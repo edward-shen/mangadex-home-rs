@@ -25,11 +25,13 @@ chrono = { version = "0.4", features = [ "serde" ] }
 clap = { version = "3.0.0-beta.2", features = [ "wrap_help" ] }
 ctrlc = "3"
 dotenv = "0.15"
+flate2 = { version = "1", features = [ "tokio" ] }
 futures = "0.3"
 once_cell = "1"
 log = { version = "0.4", features = [ "serde" ] }
 lfu_cache = "1"
 lru = "0.6"
+maxminddb = "0.20"
 md-5 = "0.9"
 parking_lot = "0.11"
 prometheus = { version = "0.12", features = [ "process" ] }
@@ -41,6 +43,7 @@ serde_repr = "0.1"
 serde_yaml = "0.8"
 sodiumoxide = "0.2"
 sqlx = { version = "0.5", features = [ "runtime-actix-rustls", "sqlite", "time", "chrono", "macros", "offline" ] }
+tar = "0.4"
 thiserror = "1"
 tokio = { version = "1", features = [ "rt-multi-thread", "macros", "fs", "sync", "parking_lot" ] }
 tokio-stream = { version = "0.1", features = [ "sync" ] }
