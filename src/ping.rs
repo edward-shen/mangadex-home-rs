@@ -22,7 +22,7 @@ use crate::CLIENT_API_VERSION;
 
 pub const CONTROL_CENTER_PING_URL: &str = "https://api.mangadex.network/ping";
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 pub struct Request<'a> {
     secret: &'a ClientSecret,
     port: Port,
@@ -177,6 +177,7 @@ pub async fn update_server_state(
     data: &mut Arc<RwLockServerState>,
 ) {
     let req = Request::from_config_and_state(secret, cli);
+    debug!("Sending ping request: {:?}", req);
     let client = reqwest::Client::new();
     let resp = client.post(CONTROL_CENTER_PING_URL).json(&req).send().await;
     match resp {
