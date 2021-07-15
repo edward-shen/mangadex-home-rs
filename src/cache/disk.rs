@@ -15,10 +15,10 @@ use md5::digest::generic_array::GenericArray;
 use md5::{Digest, Md5};
 use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::{ConnectOptions, Sqlite, SqlitePool, Transaction};
-use tokio::fs::remove_file;
+use tokio::fs::{remove_file, rename};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio_stream::wrappers::ReceiverStream;
-use tracing::{debug, error, instrument, warn};
+use tracing::{debug, error, info, instrument, warn};
 
 use crate::units::Bytes;
 
@@ -41,8 +41,20 @@ impl DiskCache {
     /// This internally spawns a task that will wait for filesystem
     /// notifications when a file has been written.
     pub async fn new(disk_max_size: Bytes, disk_path: PathBuf) -> Arc<Self> {
+        let cache_path = disk_path.to_string_lossy();
+        // Migrate old to new path
+        if rename(
+            format!("{}/metadata.sqlite", cache_path),
+            format!("{}/metadata.db", cache_path),
+        )
+        .await
+        .is_ok()
+        {
+            info!("Found old metadata file, migrating to new location.");
+        }
+
         let db_pool = {
-            let db_url = format!("sqlite:{}/metadata.db", disk_path.to_string_lossy());
+            let db_url = format!("sqlite:{}/metadata.db", cache_path);
             let mut options = SqliteConnectOptions::from_str(&db_url)
                 .unwrap()
                 .create_if_missing(true);
