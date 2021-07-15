@@ -104,20 +104,20 @@ pub async fn load_geo_ip_data(license_key: ClientSecret) -> Result<(), DbLoadErr
     // Check date of db
     let db_date_created = metadata(DB_PATH)
         .ok()
-        .and_then(|metadata| match metadata.created() {
-            Ok(time) => Some(time),
-            Err(_) => {
+        .and_then(|metadata| {
+            if let Ok(time) = metadata.created() {
+                Some(time)
+            } else {
                 debug("fs didn't report birth time, fall back to last modified instead");
                 metadata.modified().ok()
             }
         })
         .unwrap_or(SystemTime::UNIX_EPOCH);
-    let duration = match SystemTime::now().duration_since(db_date_created) {
-        Ok(time) => Duration::from_std(time).expect("duration to fit"),
-        Err(_) => {
-            warn!("Clock may have gone backwards?");
-            Duration::max_value()
-        }
+    let duration = if let Ok(time) = SystemTime::now().duration_since(db_date_created) {
+        Duration::from_std(time).expect("duration to fit")
+    } else {
+        warn!("Clock may have gone backwards?");
+        Duration::max_value()
     };
 
     // DB expired, fetch a new one
@@ -172,14 +172,12 @@ async fn fetch_db(license_key: ClientSecret) -> Result<(), DbLoadError> {
 }
 
 pub fn record_country_visit(country: Option<Country>) {
-    let iso_code = if let Some(country) = country {
+    let iso_code = country.map_or("unknown", |country| {
         country
             .country
             .and_then(|c| c.iso_code)
             .unwrap_or("unknown")
-    } else {
-        "unknown"
-    };
+    });
 
     COUNTRY_VISIT_COUNTER
         .get_metric_with_label_values(&[iso_code])

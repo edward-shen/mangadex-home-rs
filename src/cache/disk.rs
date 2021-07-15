@@ -196,39 +196,38 @@ async fn db_listener(
 
 /// Returns if a file was successfully deleted.
 async fn remove_file_handler(key: String) -> bool {
-    if let Err(e) = remove_file(&key).await {
-        match e.kind() {
-            std::io::ErrorKind::NotFound => {
-                if let Ok(bytes) = hex::decode(&key) {
-                    if bytes.len() == 16 {
-                        let hash = Md5Hash(*GenericArray::from_slice(&bytes));
-                        let path: PathBuf = hash.into();
-                        if let Err(e) = remove_file(&path).await {
-                            warn!(
-                                "Failed to delete file `{}` from cache: {}",
-                                path.to_string_lossy(),
-                                e
-                            );
-                            false
-                        } else {
-                            true
-                        }
-                    } else {
-                        warn!("Failed to delete file `{}`; invalid hash size.", &key);
-                        false
-                    }
-                } else {
-                    warn!("Failed to delete file `{}`; not a md5hash.", &key);
-                    false
-                }
-            }
-            _ => {
-                warn!("Failed to delete file `{}` from cache: {}", &key, e);
-                false
-            }
+    let error = if let Err(e) = remove_file(&key).await {
+        e
+    } else {
+        return true;
+    };
+
+    if error.kind() != std::io::ErrorKind::NotFound {
+        warn!("Failed to delete file `{}` from cache: {}", &key, error);
+        return false;
+    }
+
+    if let Ok(bytes) = hex::decode(&key) {
+        if bytes.len() != 16 {
+            warn!("Failed to delete file `{}`; invalid hash size.", &key);
+            return false;
+        }
+
+        let hash = Md5Hash(*GenericArray::from_slice(&bytes));
+        let path: PathBuf = hash.into();
+        if let Err(e) = remove_file(&path).await {
+            warn!(
+                "Failed to delete file `{}` from cache: {}",
+                path.to_string_lossy(),
+                e
+            );
+            false
+        } else {
+            true
         }
     } else {
-        true
+        warn!("Failed to delete file `{}`; not a md5hash.", &key);
+        false
     }
 }
 

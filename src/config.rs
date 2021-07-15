@@ -73,11 +73,11 @@ pub fn load_config() -> Result<Config, ConfigError> {
         Ordering::Release,
     );
 
-    config.proxy.clone().map(|socket| {
+    if let Some(socket) = config.proxy.clone() {
         USE_PROXY
             .set(socket)
             .expect("USE_PROXY to be set only by this function");
-    });
+    }
 
     DISABLE_CERT_VALIDATION.store(
         config
