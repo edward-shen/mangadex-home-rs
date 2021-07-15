@@ -36,6 +36,7 @@ mod metrics;
 mod ping;
 mod routes;
 mod state;
+#[cfg(not(tarpaulin_include))]
 mod stop;
 mod units;
 

@@ -41,28 +41,30 @@ impl DiskCache {
     /// This internally spawns a task that will wait for filesystem
     /// notifications when a file has been written.
     pub async fn new(disk_max_size: Bytes, disk_path: PathBuf) -> Arc<Self> {
-        let (db_tx, db_rx) = channel(128);
         let db_pool = {
             let db_url = format!("sqlite:{}/metadata.sqlite", disk_path.to_string_lossy());
             let mut options = SqliteConnectOptions::from_str(&db_url)
                 .unwrap()
                 .create_if_missing(true);
             options.log_statements(LevelFilter::Trace);
-            let db = SqlitePool::connect_with(options).await.unwrap();
-
-            // Run db init
-            sqlx::query_file!("./db_queries/init.sql")
-                .execute(&mut db.acquire().await.unwrap())
-                .await
-                .unwrap();
-
-            db
+            SqlitePool::connect_with(options).await.unwrap()
         };
+
+        Self::from_db_pool(db_pool, disk_max_size, disk_path).await
+    }
+
+    async fn from_db_pool(pool: SqlitePool, disk_max_size: Bytes, disk_path: PathBuf) -> Arc<Self> {
+        let (db_tx, db_rx) = channel(128);
+        // Run db init
+        sqlx::query_file!("./db_queries/init.sql")
+            .execute(&mut pool.acquire().await.unwrap())
+            .await
+            .unwrap();
 
         // This is intentional.
         #[allow(clippy::cast_sign_loss)]
         let disk_cur_size = {
-            let mut conn = db_pool.acquire().await.unwrap();
+            let mut conn = pool.acquire().await.unwrap();
             sqlx::query!("SELECT IFNULL(SUM(size), 0) AS size FROM Images")
                 .fetch_one(&mut conn)
                 .await
@@ -80,7 +82,7 @@ impl DiskCache {
         tokio::spawn(db_listener(
             Arc::clone(&new_self),
             db_rx,
-            db_pool,
+            pool,
             disk_max_size.get() as u64 / 20 * 19,
         ));
 
@@ -239,14 +241,9 @@ async fn handle_db_put(
     // This is intentional.
     #[allow(clippy::cast_possible_wrap)]
     let casted_size = size as i64;
-    let query = sqlx::query!(
-        "insert into Images (id, size, accessed) values (?, ?, ?) on conflict do nothing",
-        key,
-        casted_size,
-        now,
-    )
-    .execute(transaction)
-    .await;
+    let query = sqlx::query_file!("./db_queries/insert_image.sql", key, casted_size, now)
+        .execute(transaction)
+        .await;
 
     if let Err(e) = query {
         warn!("Failed to add to db: {}", e);
@@ -366,6 +363,59 @@ impl CallbackCache for DiskCache {
         super::fs::write_file(&path, key, image, metadata, db_callback, Some(on_complete))
             .await
             .map_err(CacheError::from)
+    }
+}
+
+#[cfg(test)]
+mod disk_cache {
+    use std::error::Error;
+    use std::path::PathBuf;
+    use std::sync::atomic::Ordering;
+
+    use chrono::Utc;
+    use sqlx::SqlitePool;
+
+    use crate::units::Bytes;
+
+    use super::DiskCache;
+
+    #[tokio::test]
+    async fn db_is_initialized() -> Result<(), Box<dyn Error>> {
+        let conn = SqlitePool::connect("sqlite::memory:").await?;
+        let _cache = DiskCache::from_db_pool(conn.clone(), Bytes(1000), PathBuf::new()).await;
+        let res = sqlx::query("select * from Images").execute(&conn).await;
+        assert!(res.is_ok());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn db_initializes_empty() -> Result<(), Box<dyn Error>> {
+        let conn = SqlitePool::connect("sqlite::memory:").await?;
+        let cache = DiskCache::from_db_pool(conn.clone(), Bytes(1000), PathBuf::new()).await;
+        assert_eq!(cache.disk_cur_size.load(Ordering::SeqCst), 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn db_can_load_from_existing() -> Result<(), Box<dyn Error>> {
+        let conn = SqlitePool::connect("sqlite::memory:").await?;
+        sqlx::query_file!("./db_queries/init.sql")
+            .execute(&conn)
+            .await?;
+
+        let now = Utc::now();
+        sqlx::query_file!("./db_queries/insert_image.sql", "a", 4, now)
+            .execute(&conn)
+            .await?;
+
+        let now = Utc::now();
+        sqlx::query_file!("./db_queries/insert_image.sql", "b", 15, now)
+            .execute(&conn)
+            .await?;
+
+        let cache = DiskCache::from_db_pool(conn.clone(), Bytes(1000), PathBuf::new()).await;
+        assert_eq!(cache.disk_cur_size.load(Ordering::SeqCst), 19);
+        Ok(())
     }
 }
 

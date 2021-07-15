@@ -198,7 +198,7 @@ impl std::fmt::Debug for ClientSecret {
     }
 }
 
-#[derive(Deserialize, Copy, Clone, Debug)]
+#[derive(Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum CacheType {
     OnDisk,
@@ -348,7 +348,69 @@ mod sample_yaml {
     use crate::config::YamlArgs;
 
     #[test]
-    fn sample_yaml_parses() {
+    fn parses() {
         assert!(serde_yaml::from_str::<YamlArgs>(include_str!("../settings.sample.yaml")).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod config {
+    use std::path::PathBuf;
+
+    use log::LevelFilter;
+    use tracing::level_filters::LevelFilter as TracingLevelFilter;
+
+    use crate::config::{CacheType, ClientSecret, Config, YamlExtendedOptions, YamlServerSettings};
+    use crate::units::{KilobitsPerSecond, Mebibytes, Port};
+
+    use super::{CliArgs, YamlArgs};
+
+    #[test]
+    fn cli_has_priority() {
+        let cli_config = CliArgs {
+            port: Port::new(1234),
+            memory_quota: Some(Mebibytes::new(10)),
+            disk_quota: Some(Mebibytes::new(10)),
+            cache_path: Some(PathBuf::from("a")),
+            network_speed: KilobitsPerSecond::new(10),
+            verbose: 1,
+            quiet: 0,
+            unstable_options: vec![],
+            override_upstream: None,
+            ephemeral_disk_encryption: true,
+            config_path: None,
+            cache_type: Some(CacheType::Lfu),
+        };
+
+        let yaml_args = YamlArgs {
+            max_cache_size_in_mebibytes: Mebibytes::new(50),
+            server_settings: YamlServerSettings {
+                secret: ClientSecret(String::new()),
+                port: Port::new(4321).expect("to work?"),
+                external_max_kilobits_per_second: KilobitsPerSecond::new(50).expect("to work?"),
+                external_port: None,
+                graceful_shutdown_wait_seconds: None,
+                hostname: None,
+                external_ip: None,
+            },
+            extended_options: Some(YamlExtendedOptions {
+                memory_quota: Some(Mebibytes::new(50)),
+                cache_type: Some(CacheType::Lru),
+                ephemeral_disk_encryption: Some(false),
+                enable_metrics: None,
+                logging_level: Some(LevelFilter::Error),
+                cache_path: Some(PathBuf::from("b")),
+            }),
+        };
+
+        let config = Config::from_cli_and_file(cli_config, yaml_args);
+        assert_eq!(Some(config.port), Port::new(1234));
+        assert_eq!(config.memory_quota, Mebibytes::new(10));
+        assert_eq!(config.disk_quota, Mebibytes::new(10));
+        assert_eq!(config.cache_path, PathBuf::from("a"));
+        assert_eq!(Some(config.network_speed), KilobitsPerSecond::new(10));
+        assert_eq!(config.log_level, TracingLevelFilter::DEBUG);
+        assert_eq!(config.ephemeral_disk_encryption, true);
+        assert_eq!(config.cache_type, CacheType::Lfu);
     }
 }

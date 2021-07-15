@@ -5,12 +5,17 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 
 /// Wrapper type for a port number.
-#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Port(NonZeroU16);
 
 impl Port {
     pub const fn get(self) -> u16 {
         self.0.get()
+    }
+
+    #[cfg(test)]
+    pub fn new(amt: u16) -> Option<Self> {
+        NonZeroU16::new(amt).map(Self)
     }
 }
 
@@ -37,6 +42,13 @@ impl Display for Port {
 #[derive(Copy, Clone, Serialize, Deserialize, Default, Debug, Hash, Eq, PartialEq)]
 pub struct Mebibytes(usize);
 
+impl Mebibytes {
+    #[cfg(test)]
+    pub fn new(size: usize) -> Self {
+        Mebibytes(size)
+    }
+}
+
 impl FromStr for Mebibytes {
     type Err = ParseIntError;
 
@@ -45,7 +57,7 @@ impl FromStr for Mebibytes {
     }
 }
 
-pub struct Bytes(usize);
+pub struct Bytes(pub usize);
 
 impl Bytes {
     pub const fn get(&self) -> usize {
@@ -61,6 +73,13 @@ impl From<Mebibytes> for Bytes {
 
 #[derive(Copy, Clone, Deserialize, Debug, Hash, Eq, PartialEq)]
 pub struct KilobitsPerSecond(NonZeroU64);
+
+impl KilobitsPerSecond {
+    #[cfg(test)]
+    pub fn new(size: u64) -> Option<Self> {
+        NonZeroU64::new(size).map(Self)
+    }
+}
 
 impl FromStr for KilobitsPerSecond {
     type Err = ParseIntError;

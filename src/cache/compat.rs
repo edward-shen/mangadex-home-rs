@@ -77,3 +77,76 @@ impl<'de> Deserialize<'de> for LegacyImageContentType {
         deserializer.deserialize_str(LegacyImageContentTypeVisitor)
     }
 }
+
+#[cfg(test)]
+mod parse {
+    use std::error::Error;
+
+    use chrono::DateTime;
+
+    use crate::cache::ImageContentType;
+
+    use super::LegacyImageMetadata;
+
+    #[test]
+    fn from_valid_legacy_format() -> Result<(), Box<dyn Error>> {
+        let legacy_header = r#"{"content_type":"image/jpeg","last_modified":"Sat, 10 Apr 2021 10:55:22 GMT","size":117888}"#;
+        let metadata: LegacyImageMetadata = serde_json::from_str(legacy_header)?;
+
+        assert_eq!(
+            metadata.content_type.map(|v| v.0),
+            Some(ImageContentType::Jpeg)
+        );
+        assert_eq!(metadata.size, Some(117888));
+        assert_eq!(
+            metadata.last_modified.map(|v| v.0),
+            Some(DateTime::parse_from_rfc2822(
+                "Sat, 10 Apr 2021 10:55:22 GMT"
+            )?)
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn empty_metadata() -> Result<(), Box<dyn Error>> {
+        let legacy_header = "{}";
+        let metadata: LegacyImageMetadata = serde_json::from_str(legacy_header)?;
+
+        assert!(metadata.content_type.is_none());
+        assert!(metadata.size.is_none());
+        assert!(metadata.last_modified.is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn invalid_image_mime_value() {
+        let legacy_header = r#"{"content_type":"image/not-a-real-image"}"#;
+        assert!(serde_json::from_str::<LegacyImageMetadata>(legacy_header).is_err());
+    }
+
+    #[test]
+    fn invalid_date_time() {
+        let legacy_header = r#"{"last_modified":"idk last tuesday?"}"#;
+        assert!(serde_json::from_str::<LegacyImageMetadata>(legacy_header).is_err());
+    }
+
+    #[test]
+    fn invalid_size() {
+        let legacy_header = r#"{"size":-1}"#;
+        assert!(serde_json::from_str::<LegacyImageMetadata>(legacy_header).is_err());
+    }
+
+    #[test]
+    fn wrong_image_type() {
+        let legacy_header = r#"{"content_type":25}"#;
+        assert!(serde_json::from_str::<LegacyImageMetadata>(legacy_header).is_err());
+    }
+
+    #[test]
+    fn wrong_date_time_type() {
+        let legacy_header = r#"{"last_modified":false}"#;
+        assert!(serde_json::from_str::<LegacyImageMetadata>(legacy_header).is_err());
+    }
+}
