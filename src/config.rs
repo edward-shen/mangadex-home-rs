@@ -200,6 +200,12 @@ impl Config {
 #[derive(Deserialize, Serialize, Clone)]
 pub struct ClientSecret(String);
 
+impl ClientSecret {
+    pub fn as_str(&self) -> &str {
+        self.0.as_ref()
+    }
+}
+
 impl std::fmt::Debug for ClientSecret {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "[client secret]")

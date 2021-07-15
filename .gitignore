@@ -6,3 +6,4 @@ perf.data*
 dhat.out.*
 settings.yaml
 tarpaulin-report.html
+GeoLite2-Country.mmdb

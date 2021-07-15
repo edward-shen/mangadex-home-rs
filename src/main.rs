@@ -5,17 +5,21 @@
 use std::env::VarError;
 use std::error::Error;
 use std::fmt::Display;
+use std::net::SocketAddr;
 use std::num::ParseIntError;
+use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use actix_web::dev::Service;
 use actix_web::rt::{spawn, time, System};
 use actix_web::web::{self, Data};
 use actix_web::{App, HttpResponse, HttpServer};
 use cache::{Cache, DiskCache};
 use chacha20::Key;
 use config::Config;
+use maxminddb::geoip2;
 use parking_lot::RwLock;
 use rustls::{NoClientAuth, ServerConfig};
 use sodiumoxide::crypto::stream::xchacha20::gen_key;
@@ -27,6 +31,7 @@ use tracing::{debug, error, info, warn};
 use crate::cache::mem::{Lfu, Lru};
 use crate::cache::{MemoryCache, ENCRYPTION_KEY};
 use crate::config::{CacheType, UnstableOptions, OFFLINE_MODE};
+use crate::metrics::{record_country_visit, GEOIP_DATABASE};
 use crate::state::DynamicServerCert;
 
 mod cache;
@@ -107,6 +112,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
         metrics::init();
     }
 
+    if let Some(key) = config.geoip_license_key.clone() {
+        if let Err(e) = metrics::load_geo_ip_data(key).await {
+            error!("Failed to initialize geo ip db: {}", e);
+        }
+    }
+
     // HTTP Server init
 
     let server = if OFFLINE_MODE.load(Ordering::Acquire) {
@@ -171,6 +182,23 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let server = HttpServer::new(move || {
         App::new()
             .wrap(actix_web::middleware::Compress::default())
+            .wrap_fn(|req, srv| {
+                if let Some(reader) = GEOIP_DATABASE.get() {
+                    let maybe_country = req
+                        .connection_info()
+                        .realip_remote_addr()
+                        .map(SocketAddr::from_str)
+                        .and_then(Result::ok)
+                        .as_ref()
+                        .map(SocketAddr::ip)
+                        .map(|ip| reader.lookup::<geoip2::Country>(ip))
+                        .and_then(Result::ok);
+
+                    record_country_visit(maybe_country);
+                }
+
+                srv.call(req)
+            })
             .service(routes::index)
             .service(routes::token_data)
             .service(routes::token_data_saver)

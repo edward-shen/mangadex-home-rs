@@ -75,3 +75,8 @@ following:
 #### Beta testers
 
 - NigelVH#7162
+
+---
+
+If using the geo IP logging feature, then this product includes GeoLite2 data
+created by MaxMind, available from https://www.maxmind.com.
