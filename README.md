@@ -15,6 +15,20 @@ cargo test
 
 You may need to set a client secret, see Configuration for more information.
 
+# Migration
+
+Migration from the official client was made to be as painless as possible. There
+are caveats though:
+  - If you ever want to return to using the official client, you will need to
+  clear your cache.
+  - As this is an unofficial client implementation, the only support you can
+  probably get is from me.
+
+Otherwise, the steps to migration is easy:
+  1. Place the binary in the same folder as your `images` folder and
+  `settings.yaml`.
+  2. Rename `images` to `cache`.
+
 # Client implementation
 
 This client follows a secure-first approach. As such, your statistics may report
@@ -28,21 +42,6 @@ choses to:
 That being said, this client should be backwards compatibility with the official
 client data and config. That means you should be able to replace the binary and
 preserve all your settings and cache.
-
-## Cache implementation
-
-This client implements a multi-tier in-memory and on-disk LRU cache constrained
-by quotas. In essence, it acts as an unified LRU, where in-memory items are
-evicted and pushed into the on-disk LRU and fetching a item from the on-disk LRU
-promotes it to the in-memory LRU.
-
-Note that the capacity of each LRU is dynamic, depending on the maximum byte
-capacity that you permit each cache to be. A large item may evict multiple
-smaller items to fit within this constraint, for example.
-
-Note that these quotas are closer to a rough estimate, and is not guaranteed to
-be strictly below these values, so it's recommended to under set your config
-values to make sure you don't exceed the actual quota.
 
 ## Installation
 
