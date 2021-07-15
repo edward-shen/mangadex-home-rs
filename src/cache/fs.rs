@@ -48,8 +48,8 @@ use super::{CacheKey, CacheStream, ImageMetadata, ENCRYPTION_KEY};
 pub(super) async fn read_file(
     file: File,
 ) -> Option<Result<(CacheStream, Option<XNonce>, ImageMetadata), std::io::Error>> {
-    let mut file_0 = file.try_clone().await.unwrap();
-    let file_1 = file.try_clone().await.unwrap();
+    let mut file_0 = file.try_clone().await.ok()?;
+    let file_1 = file.try_clone().await.ok()?;
 
     // Try reading decrypted header first...
     let mut deserializer = serde_json::Deserializer::from_reader(file.into_std().await);

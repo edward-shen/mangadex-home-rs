@@ -13,6 +13,7 @@ use futures::StreamExt;
 use log::LevelFilter;
 use md5::digest::generic_array::GenericArray;
 use md5::{Digest, Md5};
+use sodiumoxide::hex;
 use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::{ConnectOptions, Sqlite, SqlitePool, Transaction};
 use tokio::fs::{remove_file, rename, File};
@@ -185,31 +186,49 @@ async fn db_listener(
             for item in items {
                 debug!("deleting file due to exceeding cache size");
                 size_freed += item.size as u64;
-                tokio::spawn(async move {
-                    let key = item.id;
-                    if let Err(e) = remove_file(key.clone()).await {
-                        match e.kind() {
-                            std::io::ErrorKind::NotFound => {
-                                let hash = Md5Hash(*GenericArray::from_slice(key.as_bytes()));
-                                let path: PathBuf = hash.into();
-                                if let Err(e) = remove_file(&path).await {
-                                    warn!(
-                                        "Failed to delete file `{}` from cache: {}",
-                                        path.to_string_lossy(),
-                                        e
-                                    );
-                                }
-                            }
-                            _ => {
-                                warn!("Failed to delete file `{}` from cache: {}", &key, e);
-                            }
-                        }
-                    }
-                });
+                tokio::spawn(remove_file_handler(item.id));
             }
 
             cache.disk_cur_size.fetch_sub(size_freed, Ordering::Release);
         }
+    }
+}
+
+/// Returns if a file was successfully deleted.
+async fn remove_file_handler(key: String) -> bool {
+    if let Err(e) = remove_file(&key).await {
+        match e.kind() {
+            std::io::ErrorKind::NotFound => {
+                if let Ok(bytes) = hex::decode(&key) {
+                    if bytes.len() == 16 {
+                        let hash = Md5Hash(*GenericArray::from_slice(&bytes));
+                        let path: PathBuf = hash.into();
+                        if let Err(e) = remove_file(&path).await {
+                            warn!(
+                                "Failed to delete file `{}` from cache: {}",
+                                path.to_string_lossy(),
+                                e
+                            );
+                            false
+                        } else {
+                            true
+                        }
+                    } else {
+                        warn!("Failed to delete file `{}`; invalid hash size.", &key);
+                        false
+                    }
+                } else {
+                    warn!("Failed to delete file `{}`; not a md5hash.", &key);
+                    false
+                }
+            }
+            _ => {
+                warn!("Failed to delete file `{}` from cache: {}", &key, e);
+                false
+            }
+        }
+    } else {
+        true
     }
 }
 
@@ -381,6 +400,61 @@ impl CallbackCache for DiskCache {
         super::fs::write_file(&path, key, image, metadata, db_callback, Some(on_complete))
             .await
             .map_err(CacheError::from)
+    }
+}
+
+#[cfg(test)]
+mod remove_file_handler {
+
+    use std::error::Error;
+
+    use tempfile::tempdir;
+    use tokio::fs::{create_dir_all, remove_dir_all};
+
+    use super::*;
+
+    #[tokio::test]
+    async fn should_not_panic_on_invalid_path() {
+        assert!(!remove_file_handler("/this/is/a/non-existent/path/".to_string()).await);
+    }
+
+    #[tokio::test]
+    async fn should_not_panic_on_invalid_hash() {
+        assert!(!remove_file_handler("68b329da9893e34099c7d8ad5cb9c940".to_string()).await);
+    }
+
+    #[tokio::test]
+    async fn should_not_panic_on_malicious_hashes() {
+        assert!(!remove_file_handler("68b329da9893e34".to_string()).await);
+        assert!(
+            !remove_file_handler("68b329da9893e34099c7d8ad5cb9c940aaaaaaaaaaaaaaaaaa".to_string())
+                .await
+        );
+    }
+
+    #[tokio::test]
+    async fn should_delete_existing_file() -> Result<(), Box<dyn Error>> {
+        let temp_dir = tempdir()?;
+        let mut dir_path = temp_dir.path().to_path_buf();
+        dir_path.push("abc123.png");
+
+        // create a file, it can be empty
+        File::create(&dir_path).await?;
+
+        assert!(remove_file_handler(dir_path.to_string_lossy().into_owned()).await);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn should_delete_existing_hash() -> Result<(), Box<dyn Error>> {
+        create_dir_all("b/8/6").await?;
+        File::create("b/8/6/68b329da9893e34099c7d8ad5cb9c900").await?;
+
+        assert!(remove_file_handler("68b329da9893e34099c7d8ad5cb9c900".to_string()).await);
+
+        remove_dir_all("b").await?;
+        Ok(())
     }
 }
 

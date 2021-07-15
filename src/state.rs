@@ -146,9 +146,10 @@ impl ServerState {
     pub fn init_offline() -> Self {
         assert!(OFFLINE_MODE.load(Ordering::Acquire));
         Self {
-            precomputed_key: PrecomputedKey::from_slice(&[41; PRECOMPUTEDKEYBYTES]).unwrap(),
-            image_server: Url::from_file_path("/dev/null").unwrap(),
-            url: Url::from_str("http://localhost").unwrap(),
+            precomputed_key: PrecomputedKey::from_slice(&[41; PRECOMPUTEDKEYBYTES])
+                .expect("expect offline config to work"),
+            image_server: Url::from_file_path("/dev/null").expect("expect offline config to work"),
+            url: Url::from_str("http://localhost").expect("expect offline config to work"),
             url_overridden: false,
         }
     }
@@ -163,8 +164,16 @@ impl ResolvesServerCert for DynamicServerCert {
         // TODO: wait for actix-web to use a new version of rustls so we can
         // remove cloning the certs all the time
         Some(CertifiedKey {
-            cert: TLS_CERTS.get().unwrap().load().as_ref().clone(),
-            key: TLS_SIGNING_KEY.get().unwrap().load_full(),
+            cert: TLS_CERTS
+                .get()
+                .expect("tls cert to exist")
+                .load()
+                .as_ref()
+                .clone(),
+            key: TLS_SIGNING_KEY
+                .get()
+                .expect("tls signing key to exist")
+                .load_full(),
             ocsp: None,
             sct_list: None,
         })
