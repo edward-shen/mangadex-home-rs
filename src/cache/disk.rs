@@ -282,7 +282,7 @@ impl TryFrom<&Path> for Md5Hash {
 
 impl From<Md5Hash> for PathBuf {
     fn from(hash: Md5Hash) -> Self {
-        let hex_value = dbg!(hash.to_hex_string());
+        let hex_value = hash.to_hex_string();
         let path = hex_value[0..3]
             .chars()
             .rev()
@@ -309,17 +309,18 @@ impl Cache for DiskCache {
 
         let legacy_path = Md5Hash::try_from(path_0.as_path())
             .map(PathBuf::from)
+            .map(|path| self.disk_path.clone().join(path))
             .map(Arc::new);
 
         // Get file and path of first existing location path
         let (file, path) = if let Ok(legacy_path) = legacy_path {
             let maybe_files = join!(
+                File::open(legacy_path.as_path()),
                 File::open(path.as_path()),
-                File::open(legacy_path.as_path())
             );
             match maybe_files {
-                (Ok(f), _) => Some((f, path)),
-                (_, Ok(f)) => Some((f, legacy_path)),
+                (Ok(f), _) => Some((f, legacy_path)),
+                (_, Ok(f)) => Some((f, path)),
                 _ => return None,
             }
         } else {
