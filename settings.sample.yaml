@@ -55,6 +55,13 @@ server_settings:
   # presence of multiple IPs.
   # external_ip: ~
 
+# Settings for geo IP analytics
+metric_settings:
+  # Whether to enable geo IP analytics
+  # enable_geoip: false
+  # geoip_license_key: none
+
+
 # These settings are unique to the Rust client, and may be ignored or behave
 # differently from the official client.
 extended_options:

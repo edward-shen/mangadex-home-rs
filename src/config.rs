@@ -91,6 +91,7 @@ pub struct Config {
     pub unstable_options: Vec<UnstableOptions>,
     pub override_upstream: Option<Url>,
     pub enable_metrics: bool,
+    pub geoip_license_key: Option<ClientSecret>,
 }
 
 impl Config {
@@ -184,6 +185,13 @@ impl Config {
             // Unstable options (and related) should never be in yaml config
             unstable_options: cli_args.unstable_options,
             override_upstream: cli_args.override_upstream,
+            geoip_license_key: file_args.metric_settings.and_then(|args| {
+                if args.enable_geoip.unwrap_or_default() {
+                    args.geoip_license_key
+                } else {
+                    None
+                }
+            }),
         }
     }
 }
@@ -230,7 +238,8 @@ struct YamlArgs {
     // Naming is legacy
     max_cache_size_in_mebibytes: Mebibytes,
     server_settings: YamlServerSettings,
-    // This implementation custom options
+    metric_settings: Option<YamlMetricSettings>,
+    // This implementation's custom options
     extended_options: Option<YamlExtendedOptions>,
 }
 
@@ -245,6 +254,12 @@ struct YamlServerSettings {
     graceful_shutdown_wait_seconds: Option<NonZeroU16>,
     hostname: Option<IpAddr>,
     external_ip: Option<IpAddr>,
+}
+
+#[derive(Deserialize)]
+struct YamlMetricSettings {
+    enable_geoip: Option<bool>,
+    geoip_license_key: Option<ClientSecret>,
 }
 
 #[derive(Deserialize, Default)]
@@ -393,6 +408,7 @@ mod config {
                 hostname: None,
                 external_ip: None,
             },
+            metric_settings: None,
             extended_options: Some(YamlExtendedOptions {
                 memory_quota: Some(Mebibytes::new(50)),
                 cache_type: Some(CacheType::Lru),
