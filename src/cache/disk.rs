@@ -42,7 +42,7 @@ impl DiskCache {
     /// notifications when a file has been written.
     pub async fn new(disk_max_size: Bytes, disk_path: PathBuf) -> Arc<Self> {
         let db_pool = {
-            let db_url = format!("sqlite:{}/metadata.sqlite", disk_path.to_string_lossy());
+            let db_url = format!("sqlite:{}/metadata.db", disk_path.to_string_lossy());
             let mut options = SqliteConnectOptions::from_str(&db_url)
                 .unwrap()
                 .create_if_missing(true);
