@@ -1,5 +1,15 @@
 {
   "db": "SQLite",
+  "24b536161a0ed44d0595052ad069c023631ffcdeadb15a01ee294717f87cdd42": {
+    "query": "update Images set accessed = ? where id = ?",
+    "describe": {
+      "columns": [],
+      "parameters": {
+        "Right": 2
+      },
+      "nullable": []
+    }
+  },
   "2a8aa6dd2c59241a451cd73f23547d0e94930e35654692839b5d11bb8b87703e": {
     "query": "insert into Images (id, size, accessed) values (?, ?, ?) on conflict do nothing",
     "describe": {
@@ -50,16 +60,6 @@
         false,
         false
       ]
-    }
-  },
-  "59e09d6fbcc7cd91807f6c9598e4028352b28e83e85c98d96cafd3e713b4d7b7": {
-    "query": "update Images set accessed = ? where id = ? or id = ?",
-    "describe": {
-      "columns": [],
-      "parameters": {
-        "Right": 3
-      },
-      "nullable": []
     }
   },
   "a60501a30fd75b2a2a59f089e850343af075436a5c543a267ecb4fa841593ce9": {

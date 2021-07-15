@@ -16,7 +16,7 @@
 
 use std::error::Error;
 use std::fmt::Display;
-use std::io::{Seek, SeekFrom};
+use std::io::SeekFrom;
 use std::path::Path;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -44,28 +44,21 @@ use super::{CacheKey, CacheStream, ImageMetadata, ENCRYPTION_KEY};
 /// Attempts to lookup the file on disk, returning a byte stream if it exists.
 /// Note that this could return two types of streams, depending on if the file
 /// is in progress of being written to.
-#[inline]
-pub(super) async fn read_file_from_path(
-    path: &Path,
-) -> Option<Result<(CacheStream, Option<XNonce>, ImageMetadata), std::io::Error>> {
-    read_file(std::fs::File::open(path).ok()?).await
-}
-
 #[instrument(level = "debug")]
-async fn read_file(
-    file: std::fs::File,
+pub(super) async fn read_file(
+    file: File,
 ) -> Option<Result<(CacheStream, Option<XNonce>, ImageMetadata), std::io::Error>> {
-    let mut file_0 = file.try_clone().unwrap();
-    let file_1 = file.try_clone().unwrap();
+    let mut file_0 = file.try_clone().await.unwrap();
+    let file_1 = file.try_clone().await.unwrap();
 
     // Try reading decrypted header first...
-    let mut deserializer = serde_json::Deserializer::from_reader(file);
+    let mut deserializer = serde_json::Deserializer::from_reader(file.into_std().await);
     let mut maybe_metadata = ImageMetadata::deserialize(&mut deserializer);
 
     // Failed to parse normally, see if we have a legacy file format
     if maybe_metadata.is_err() {
-        file_0.seek(SeekFrom::Start(2)).ok()?;
-        let mut deserializer = serde_json::Deserializer::from_reader(file_0);
+        file_0.seek(SeekFrom::Start(2)).await.ok()?;
+        let mut deserializer = serde_json::Deserializer::from_reader(file_0.into_std().await);
         maybe_metadata =
             LegacyImageMetadata::deserialize(&mut deserializer).map(LegacyImageMetadata::into);
     }
@@ -82,12 +75,12 @@ async fn read_file(
             return None;
         }
 
-        reader = Some(Box::pin(BufReader::new(File::from_std(file_1))));
+        reader = Some(Box::pin(BufReader::new(file_1)));
         parsed_metadata = Some(metadata);
         debug!("Found not encrypted file");
     } else {
         debug!("metadata read failed, trying to see if it's encrypted");
-        let mut file = File::from_std(file_1);
+        let mut file = file_1;
         file.seek(SeekFrom::Start(0)).await.ok()?;
 
         // image is encrypted or corrupt
@@ -391,6 +384,7 @@ mod read_file {
     use futures::StreamExt;
     use std::io::{Seek, SeekFrom, Write};
     use tempfile::tempfile;
+    use tokio::fs::File;
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
@@ -402,6 +396,7 @@ mod read_file {
             )
             .unwrap();
         temp_file.seek(SeekFrom::Start(0)).unwrap();
+        let temp_file = File::from_std(temp_file);
 
         let (inner_stream, maybe_header, metadata) = read_file(temp_file).await.unwrap().unwrap();
 
@@ -431,6 +426,7 @@ mod read_file_compat {
     use futures::StreamExt;
     use std::io::{Seek, SeekFrom, Write};
     use tempfile::tempfile;
+    use tokio::fs::File;
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
@@ -442,6 +438,7 @@ mod read_file_compat {
             )
             .unwrap();
         temp_file.seek(SeekFrom::Start(0)).unwrap();
+        let temp_file = File::from_std(temp_file);
 
         let (inner_stream, maybe_header, metadata) = read_file(temp_file).await.unwrap().unwrap();
 

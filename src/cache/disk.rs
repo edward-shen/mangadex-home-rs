@@ -15,7 +15,8 @@ use md5::digest::generic_array::GenericArray;
 use md5::{Digest, Md5};
 use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::{ConnectOptions, Sqlite, SqlitePool, Transaction};
-use tokio::fs::{remove_file, rename};
+use tokio::fs::{remove_file, rename, File};
+use tokio::join;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::{debug, error, info, instrument, warn};
@@ -214,27 +215,11 @@ async fn db_listener(
 
 #[instrument(level = "debug", skip(transaction))]
 async fn handle_db_get(entry: &Path, transaction: &mut Transaction<'_, Sqlite>) {
-    let hash = if let Ok(hash) = Md5Hash::try_from(entry) {
-        hash
-    } else {
-        error!(
-            "Failed to derive hash from entry, dropping message: {}",
-            entry.to_string_lossy()
-        );
-        return;
-    };
-
-    let hash_str = hash.to_hex_string();
     let key = entry.as_os_str().to_str();
     let now = chrono::Utc::now();
-    let query = sqlx::query!(
-        "update Images set accessed = ? where id = ? or id = ?",
-        now,
-        key,
-        hash_str
-    )
-    .execute(transaction)
-    .await;
+    let query = sqlx::query!("update Images set accessed = ? where id = ?", now, key)
+        .execute(transaction)
+        .await;
     if let Err(e) = query {
         warn!("Failed to update timestamp in db for {:?}: {}", key, e);
     }
@@ -319,14 +304,34 @@ impl Cache for DiskCache {
     ) -> Option<Result<(CacheStream, ImageMetadata), CacheError>> {
         let channel = self.db_update_channel_sender.clone();
 
-        // TODO: Check legacy path as well
-
         let path = Arc::new(self.disk_path.clone().join(PathBuf::from(key)));
         let path_0 = Arc::clone(&path);
 
-        tokio::spawn(async move { channel.send(DbMessage::Get(path_0)).await });
+        let legacy_path = Md5Hash::try_from(path_0.as_path())
+            .map(PathBuf::from)
+            .map(Arc::new);
 
-        super::fs::read_file_from_path(&path).await.map(|res| {
+        // Get file and path of first existing location path
+        let (file, path) = if let Ok(legacy_path) = legacy_path {
+            let maybe_files = join!(
+                File::open(path.as_path()),
+                File::open(legacy_path.as_path())
+            );
+            match maybe_files {
+                (Ok(f), _) => Some((f, path)),
+                (_, Ok(f)) => Some((f, legacy_path)),
+                _ => return None,
+            }
+        } else {
+            File::open(path.as_path())
+                .await
+                .ok()
+                .map(|file| (file, path))
+        }?;
+
+        tokio::spawn(async move { channel.send(DbMessage::Get(path)).await });
+
+        super::fs::read_file(file).await.map(|res| {
             res.map(|(stream, _, metadata)| (stream, metadata))
                 .map_err(|_| CacheError::DecryptionFailure)
         })
