@@ -5,7 +5,7 @@ use tracing::{info, warn};
 use crate::client::HTTP_CLIENT;
 use crate::config::ClientSecret;
 
-const CONTROL_CENTER_STOP_URL: &str = "https://api.mangadex.network/ping";
+const CONTROL_CENTER_STOP_URL: &str = "https://api.mangadex.network/stop";
 
 #[derive(Serialize)]
 struct StopRequest<'a> {
