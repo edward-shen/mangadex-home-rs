@@ -232,7 +232,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // Waiting for us to finish sending stop message
     while running.load(Ordering::SeqCst) {
-        std::thread::sleep(Duration::from_millis(250));
+        tokio::time::sleep(Duration::from_millis(250)).await;
     }
 
     Ok(())
@@ -307,6 +307,13 @@ fn print_preamble_and_warnings(args: &Config) -> Result<(), Box<dyn Error>> {
 
     if args.unstable_options.contains(&UnstableOptions::DisableTls) {
         warn!("Serving insecure traffic! You better be running this for development only.");
+    }
+
+    if args
+        .unstable_options
+        .contains(&UnstableOptions::DisableCertValidation)
+    {
+        error!("Cert validation disabled! You REALLY only better be debugging.");
     }
 
     if args.override_upstream.is_some()

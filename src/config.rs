@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use clap::{crate_authors, crate_description, crate_version, Clap};
 use log::LevelFilter;
+use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::level_filters::LevelFilter as TracingLevelFilter;
@@ -20,6 +21,8 @@ use crate::units::{KilobitsPerSecond, Mebibytes, Port};
 // Validate tokens is an atomic because it's faster than locking on rwlock.
 pub static VALIDATE_TOKENS: AtomicBool = AtomicBool::new(false);
 pub static OFFLINE_MODE: AtomicBool = AtomicBool::new(false);
+pub static USE_PROXY: OnceCell<Url> = OnceCell::new();
+pub static DISABLE_CERT_VALIDATION: AtomicBool = AtomicBool::new(false);
 
 #[derive(Error, Debug)]
 pub enum ConfigError {
@@ -70,6 +73,19 @@ pub fn load_config() -> Result<Config, ConfigError> {
         Ordering::Release,
     );
 
+    config.proxy.clone().map(|socket| {
+        USE_PROXY
+            .set(socket)
+            .expect("USE_PROXY to be set only by this function");
+    });
+
+    DISABLE_CERT_VALIDATION.store(
+        config
+            .unstable_options
+            .contains(&UnstableOptions::DisableCertValidation),
+        Ordering::Release,
+    );
+
     Ok(config)
 }
 
@@ -92,6 +108,7 @@ pub struct Config {
     pub override_upstream: Option<Url>,
     pub enable_metrics: bool,
     pub geoip_license_key: Option<ClientSecret>,
+    pub proxy: Option<Url>,
 }
 
 impl Config {
@@ -192,6 +209,7 @@ impl Config {
                     None
                 }
             }),
+            proxy: cli_args.proxy,
         }
     }
 }
@@ -326,6 +344,10 @@ struct CliArgs {
     /// value is "on_disk", other options are "lfu" and "lru".
     #[clap(short = 't', long)]
     pub cache_type: Option<CacheType>,
+    /// Whether or not to use a proxy for upstream requests. This affects all
+    /// requests except for the shutdown request.
+    #[clap(short = 'P', long)]
+    pub proxy: Option<Url>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -343,6 +365,10 @@ pub enum UnstableOptions {
 
     /// Serves HTTP in plaintext
     DisableTls,
+
+    /// Disable certificate validation. Only useful for debugging with a MITM
+    /// proxy
+    DisableCertValidation,
 }
 
 impl FromStr for UnstableOptions {
@@ -354,6 +380,7 @@ impl FromStr for UnstableOptions {
             "disable-token-validation" => Ok(Self::DisableTokenValidation),
             "offline-mode" => Ok(Self::OfflineMode),
             "disable-tls" => Ok(Self::DisableTls),
+            "disable-cert-validation" => Ok(Self::DisableCertValidation),
             _ => Err(format!("Unknown unstable option '{}'", s)),
         }
     }
@@ -366,6 +393,7 @@ impl Display for UnstableOptions {
             Self::DisableTokenValidation => write!(f, "disable-token-validation"),
             Self::OfflineMode => write!(f, "offline-mode"),
             Self::DisableTls => write!(f, "disable-tls"),
+            Self::DisableCertValidation => write!(f, "disable-cert-validation"),
         }
     }
 }
@@ -407,6 +435,7 @@ mod config {
             ephemeral_disk_encryption: true,
             config_path: None,
             cache_type: Some(CacheType::Lfu),
+            proxy: None,
         };
 
         let yaml_args = YamlArgs {

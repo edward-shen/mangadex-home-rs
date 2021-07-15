@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -11,21 +12,37 @@ use reqwest::header::{
     ACCESS_CONTROL_ALLOW_ORIGIN, ACCESS_CONTROL_EXPOSE_HEADERS, CACHE_CONTROL, CONTENT_LENGTH,
     CONTENT_TYPE, LAST_MODIFIED, X_CONTENT_TYPE_OPTIONS,
 };
-use reqwest::{Client, StatusCode};
+use reqwest::{Client, Proxy, StatusCode};
 use tokio::sync::watch::{channel, Receiver};
 use tokio::sync::Notify;
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::cache::{Cache, CacheKey, ImageMetadata};
+use crate::config::{DISABLE_CERT_VALIDATION, USE_PROXY};
 
-pub static HTTP_CLIENT: Lazy<CachingClient> = Lazy::new(|| CachingClient {
-    inner: Client::builder()
+pub static HTTP_CLIENT: Lazy<CachingClient> = Lazy::new(|| {
+    let mut inner = Client::builder()
         .pool_idle_timeout(Duration::from_secs(180))
         .https_only(true)
-        .http2_prior_knowledge()
-        .build()
-        .expect("Client initialization to work"),
-    locks: RwLock::new(HashMap::new()),
+        .http2_prior_knowledge();
+
+    if let Some(socket_addr) = USE_PROXY.get() {
+        info!(
+            "Using {} as a proxy for upstream requests.",
+            socket_addr.as_str()
+        );
+        inner = inner.proxy(Proxy::all(socket_addr.as_str()).unwrap());
+    }
+
+    if DISABLE_CERT_VALIDATION.load(Ordering::Acquire) {
+        inner = inner.danger_accept_invalid_certs(true);
+    }
+
+    let inner = inner.build().expect("Client initialization to work");
+    CachingClient {
+        inner,
+        locks: RwLock::new(HashMap::new()),
+    }
 });
 
 pub static DEFAULT_HEADERS: Lazy<HeaderMap> = Lazy::new(|| {

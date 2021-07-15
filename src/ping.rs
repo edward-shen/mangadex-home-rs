@@ -12,6 +12,7 @@ use sodiumoxide::crypto::box_::PrecomputedKey;
 use tracing::{debug, error, info, warn};
 use url::Url;
 
+use crate::client::HTTP_CLIENT;
 use crate::config::{ClientSecret, Config, UnstableOptions, VALIDATE_TOKENS};
 use crate::state::{
     RwLockServerState, PREVIOUSLY_COMPROMISED, PREVIOUSLY_PAUSED, TLS_CERTS,
@@ -178,8 +179,12 @@ pub async fn update_server_state(
 ) {
     let req = Request::from_config_and_state(secret, cli);
     debug!("Sending ping request: {:?}", req);
-    let client = reqwest::Client::new();
-    let resp = client.post(CONTROL_CENTER_PING_URL).json(&req).send().await;
+    let resp = HTTP_CLIENT
+        .inner()
+        .post(CONTROL_CENTER_PING_URL)
+        .json(&req)
+        .send()
+        .await;
     match resp {
         Ok(resp) => match resp.json::<Response>().await {
             Ok(Response::Ok(resp)) => {

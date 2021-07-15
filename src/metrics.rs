@@ -11,6 +11,7 @@ use tar::Archive;
 use thiserror::Error;
 use tracing::{debug, field::debug, info, warn};
 
+use crate::client::HTTP_CLIENT;
 use crate::config::ClientSecret;
 
 pub static GEOIP_DATABASE: OnceCell<maxminddb::Reader<Vec<u8>>> = OnceCell::new();
@@ -136,7 +137,10 @@ pub async fn load_geo_ip_data(license_key: ClientSecret) -> Result<(), DbLoadErr
 }
 
 async fn fetch_db(license_key: ClientSecret) -> Result<(), DbLoadError> {
-    let resp = reqwest::get(format!("https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-Country&license_key={}&suffix=tar.gz", license_key.as_str()))
+    let resp = HTTP_CLIENT
+        .inner()
+        .get(format!("https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-Country&license_key={}&suffix=tar.gz", license_key.as_str()))
+        .send()
         .await?
         .bytes()
         .await?;

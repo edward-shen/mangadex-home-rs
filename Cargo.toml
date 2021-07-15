@@ -52,7 +52,7 @@ sodiumoxide = "0.2"
 sqlx = { version = "0.5", features = [ "runtime-actix-rustls", "sqlite", "time", "chrono", "macros", "offline" ] }
 tar = "0.4"
 thiserror = "1"
-tokio = { version = "1", features = [ "rt-multi-thread", "macros", "fs", "sync", "parking_lot" ] }
+tokio = { version = "1", features = [ "rt-multi-thread", "macros", "fs", "time", "sync", "parking_lot" ] }
 tokio-stream = { version = "0.1", features = [ "sync" ] }
 tokio-util = { version = "0.6", features = [ "codec" ] }
 tracing = "0.1"
