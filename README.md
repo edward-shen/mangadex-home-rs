@@ -58,3 +58,20 @@ Note that the client secret (`CLIENT_SECRET`) is the only configuration option
 that can only can be provided from the environment, an `.env` file, or the
 `settings.yaml` file. In other words, you _cannot_ provide this value from the
 command line.
+
+## Special thanks
+
+This project could not have been completed without the assistance of the
+following:
+
+#### Development Assistance (Alphabetical Order)
+
+- carbotaniuman#6974
+- LFlair#1337
+- Plykiya#1738
+- Tristan 9#6752
+- The Rust Discord community
+
+#### Beta testers
+
+- NigelVH#7162
