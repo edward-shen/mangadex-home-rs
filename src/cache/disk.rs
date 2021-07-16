@@ -24,7 +24,7 @@ use tracing::{debug, error, info, instrument, warn};
 
 use crate::units::Bytes;
 
-use super::{Cache, CacheError, CacheKey, CacheStream, CallbackCache, ImageMetadata};
+use super::{Cache, CacheEntry, CacheError, CacheKey, CacheStream, CallbackCache, ImageMetadata};
 
 #[derive(Debug)]
 pub struct DiskCache {
@@ -386,7 +386,7 @@ impl CallbackCache for DiskCache {
         key: CacheKey,
         image: bytes::Bytes,
         metadata: ImageMetadata,
-        on_complete: Sender<(CacheKey, bytes::Bytes, ImageMetadata, u64)>,
+        on_complete: Sender<CacheEntry>,
     ) -> Result<(), CacheError> {
         let channel = self.db_update_channel_sender.clone();
 

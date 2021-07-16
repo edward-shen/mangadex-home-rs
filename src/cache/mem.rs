@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use super::{Cache, CacheKey, CacheStream, CallbackCache, ImageMetadata, MemStream};
+use super::{Cache, CacheEntry, CacheKey, CacheStream, CallbackCache, ImageMetadata, MemStream};
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures::FutureExt;
@@ -75,7 +75,7 @@ pub struct MemoryCache<MemoryCacheImpl, ColdCache> {
     inner: ColdCache,
     cur_mem_size: AtomicU64,
     mem_cache: Mutex<MemoryCacheImpl>,
-    master_sender: Sender<(CacheKey, Bytes, ImageMetadata, u64)>,
+    master_sender: Sender<CacheEntry>,
 }
 
 impl<MemoryCacheImpl, ColdCache> MemoryCache<MemoryCacheImpl, ColdCache>
@@ -105,21 +105,29 @@ where
 async fn internal_cache_listener<MemoryCacheImpl, ColdCache>(
     cache: Arc<MemoryCache<MemoryCacheImpl, ColdCache>>,
     max_mem_size: crate::units::Bytes,
-    mut rx: Receiver<(CacheKey, Bytes, ImageMetadata, u64)>,
+    mut rx: Receiver<CacheEntry>,
 ) where
     MemoryCacheImpl: InternalMemoryCache,
     ColdCache: Cache,
 {
     let max_mem_size = max_mem_size.get() / 20 * 19;
-    while let Some((key, bytes, metadata, size)) = rx.recv().await {
+    while let Some(CacheEntry {
+        key,
+        data,
+        metadata,
+        on_disk_size,
+    }) = rx.recv().await
+    {
         // Add to memory cache
         // We can add first because we constrain our memory usage to 95%
-        cache.cur_mem_size.fetch_add(size as u64, Ordering::Release);
+        cache
+            .cur_mem_size
+            .fetch_add(on_disk_size as u64, Ordering::Release);
         cache
             .mem_cache
             .lock()
             .await
-            .push(key, (bytes, metadata, size));
+            .push(key, (data, metadata, on_disk_size));
 
         // Pop if too large
         while cache.cur_mem_size.load(Ordering::Acquire) >= max_mem_size as u64 {

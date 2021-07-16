@@ -212,7 +212,7 @@ pub trait CallbackCache: Cache {
         key: CacheKey,
         image: Bytes,
         metadata: ImageMetadata,
-        on_complete: Sender<(CacheKey, Bytes, ImageMetadata, u64)>,
+        on_complete: Sender<CacheEntry>,
     ) -> Result<(), CacheError>;
 }
 
@@ -224,13 +224,21 @@ impl<T: CallbackCache> CallbackCache for Arc<T> {
         key: CacheKey,
         image: Bytes,
         metadata: ImageMetadata,
-        on_complete: Sender<(CacheKey, Bytes, ImageMetadata, u64)>,
+        on_complete: Sender<CacheEntry>,
     ) -> Result<(), CacheError> {
         self.as_ref()
             .put_with_on_completed_callback(key, image, metadata, on_complete)
             .await
     }
 }
+
+pub struct CacheEntry {
+    key: CacheKey,
+    data: Bytes,
+    metadata: ImageMetadata,
+    on_disk_size: u64,
+}
+
 pub enum CacheStream {
     Memory(MemStream),
     Completed(FramedRead<Pin<Box<dyn MetadataFetch + Send>>, BytesCodec>),

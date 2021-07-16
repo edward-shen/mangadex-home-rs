@@ -39,7 +39,7 @@ use tokio_util::codec::{BytesCodec, FramedRead};
 use tracing::{debug, instrument, warn};
 
 use super::compat::LegacyImageMetadata;
-use super::{CacheKey, CacheStream, ImageMetadata, ENCRYPTION_KEY};
+use super::{CacheEntry, CacheKey, CacheStream, ImageMetadata, ENCRYPTION_KEY};
 
 /// Attempts to lookup the file on disk, returning a byte stream if it exists.
 /// Note that this could return two types of streams, depending on if the file
@@ -220,11 +220,11 @@ impl<'a, R: AsyncBufRead> Future for MetadataFuture<'a, R> {
 /// that is called with a completed cache entry.
 pub(super) async fn write_file<Fut, DbCallback>(
     path: &Path,
-    cache_key: CacheKey,
-    bytes: Bytes,
+    key: CacheKey,
+    data: Bytes,
     metadata: ImageMetadata,
     db_callback: DbCallback,
-    on_complete: Option<Sender<(CacheKey, Bytes, ImageMetadata, u64)>>,
+    on_complete: Option<Sender<CacheEntry>>,
 ) -> Result<(), std::io::Error>
 where
     Fut: 'static + Send + Sync + Future<Output = ()>,
@@ -254,8 +254,8 @@ where
 
     let mut error = writer.write_all(metadata_string.as_bytes()).await.err();
     if error.is_none() {
-        debug!("decrypted write {:x?}", &bytes[..40]);
-        error = writer.write_all(&bytes).await.err();
+        debug!("decrypted write {:x?}", &data[..40]);
+        error = writer.write_all(&data).await.err();
     }
 
     if let Some(e) = error {
@@ -270,13 +270,18 @@ where
     writer.flush().await?;
     debug!("writing to file done");
 
-    let bytes_written = (metadata_size + bytes.len()) as u64;
-    tokio::spawn(db_callback(bytes_written));
+    let on_disk_size = (metadata_size + data.len()) as u64;
+    tokio::spawn(db_callback(on_disk_size));
 
     if let Some(sender) = on_complete {
         tokio::spawn(async move {
             sender
-                .send((cache_key, bytes, metadata, bytes_written))
+                .send(CacheEntry {
+                    key,
+                    data,
+                    metadata,
+                    on_disk_size,
+                })
                 .await
         });
     }
