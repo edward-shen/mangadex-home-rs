@@ -100,6 +100,25 @@ where
 
         new_self
     }
+
+    /// Returns an instance of the cache with the receiver for callback events
+    /// Really only useful for inspecting the receiver, e.g. for testing
+    #[cfg(test)]
+    pub fn new_with_receiver(
+        inner: ColdCache,
+        _: crate::units::Bytes,
+    ) -> (Self, Receiver<CacheEntry>) {
+        let (tx, rx) = channel(100);
+        (
+            Self {
+                inner,
+                cur_mem_size: AtomicU64::new(0),
+                mem_cache: Mutex::new(MemoryCacheImpl::unbounded()),
+                master_sender: tx,
+            },
+            rx,
+        )
+    }
 }
 
 async fn internal_cache_listener<MemoryCacheImpl, ColdCache>(
@@ -179,4 +198,136 @@ where
             .put_with_on_completed_callback(key, image, metadata, self.master_sender.clone())
             .await
     }
+}
+
+#[cfg(test)]
+mod test_util {
+    use std::collections::HashMap;
+
+    use super::{CacheValue, InternalMemoryCache};
+    use crate::cache::{
+        Cache, CacheEntry, CacheError, CacheKey, CacheStream, CallbackCache, ImageMetadata,
+    };
+    use async_trait::async_trait;
+    use tokio::sync::mpsc::Sender;
+
+    pub struct TestDiskCache(
+        pub HashMap<CacheKey, Result<(CacheStream, ImageMetadata), CacheError>>,
+    );
+
+    #[async_trait]
+    impl Cache for TestDiskCache {
+        async fn get(
+            &self,
+            key: &CacheKey,
+        ) -> Option<Result<(CacheStream, ImageMetadata), CacheError>> {
+            // todo: Actually implement nontrivial code
+            None
+        }
+
+        async fn put(
+            &self,
+            key: CacheKey,
+            image: bytes::Bytes,
+            metadata: ImageMetadata,
+        ) -> Result<(), CacheError> {
+            todo!()
+        }
+    }
+
+    #[async_trait]
+    impl CallbackCache for TestDiskCache {
+        async fn put_with_on_completed_callback(
+            &self,
+            key: CacheKey,
+            image: bytes::Bytes,
+            metadata: ImageMetadata,
+            on_complete: Sender<CacheEntry>,
+        ) -> Result<(), CacheError> {
+            todo!()
+        }
+    }
+
+    #[derive(Default)]
+    pub struct TestMemoryCache(pub HashMap<CacheKey, CacheValue>);
+
+    impl InternalMemoryCache for TestMemoryCache {
+        fn unbounded() -> Self {
+            Self::default()
+        }
+
+        fn get(&mut self, key: &CacheKey) -> Option<&CacheValue> {
+            self.0.get(key)
+        }
+
+        fn push(&mut self, key: CacheKey, data: CacheValue) {
+            self.0.insert(key, data);
+        }
+
+        fn pop(&mut self) -> Option<(CacheKey, CacheValue)> {
+            unimplemented!("shouldn't be needed for tests");
+        }
+    }
+}
+
+#[cfg(test)]
+mod cache_ops {
+    use std::collections::HashMap;
+    use std::error::Error;
+
+    use bytes::Bytes;
+    use futures::FutureExt;
+
+    use crate::cache::mem::InternalMemoryCache;
+    use crate::cache::{Cache, CacheKey, CacheStream, ImageMetadata, MemStream};
+
+    use super::test_util::{TestDiskCache, TestMemoryCache};
+    use super::MemoryCache;
+
+    #[tokio::test]
+    async fn get_mem_cached() -> Result<(), Box<dyn Error>> {
+        let (cache, mut rx) = MemoryCache::<TestMemoryCache, _>::new_with_receiver(
+            TestDiskCache(HashMap::new()),
+            crate::units::Bytes(10),
+        );
+
+        let key = CacheKey("a".to_string(), "b".to_string(), false);
+        let metadata = ImageMetadata {
+            content_type: None,
+            content_length: Some(1),
+            last_modified: None,
+        };
+        let bytes = Bytes::from_static(b"abcd");
+        let value = (bytes.clone(), metadata.clone(), 34);
+
+        // Populate the cache, need to drop the lock else it's considered locked
+        // when we actually call the cache
+        {
+            let mem_cache = &mut cache.mem_cache.lock().await;
+            mem_cache.push(key.clone(), value.clone());
+        }
+
+        let (stream, ret_metadata) = cache.get(&key).await.unwrap()?;
+        assert_eq!(metadata, ret_metadata);
+        if let CacheStream::Memory(MemStream(ret_stream)) = stream {
+            assert_eq!(bytes, ret_stream);
+        } else {
+            panic!("wrong stream type");
+        }
+
+        assert!(rx.recv().now_or_never().is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn get_disk_cached() {}
+
+    #[test]
+    fn get_miss() {}
+}
+
+#[cfg(test)]
+mod db_listener {
+    use super::*;
 }
