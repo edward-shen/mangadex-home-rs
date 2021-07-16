@@ -32,7 +32,7 @@ mod disk;
 mod fs;
 pub mod mem;
 
-#[derive(PartialEq, Eq, Hash, Clone)]
+#[derive(PartialEq, Eq, Hash, Clone, Debug)]
 pub struct CacheKey(pub String, pub String, pub bool);
 
 impl Display for CacheKey {
@@ -62,7 +62,7 @@ impl From<&CacheKey> for PathBuf {
 #[derive(Clone)]
 pub struct CachedImage(pub Bytes);
 
-#[derive(Copy, Clone, Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Copy, Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct ImageMetadata {
     pub content_type: Option<ImageContentType>,
     pub content_length: Option<u32>,
@@ -232,6 +232,7 @@ impl<T: CallbackCache> CallbackCache for Arc<T> {
     }
 }
 
+#[derive(PartialEq, Eq, Debug)]
 pub struct CacheEntry {
     key: CacheKey,
     data: Bytes,

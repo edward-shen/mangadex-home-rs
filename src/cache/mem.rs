@@ -249,11 +249,22 @@ mod test_util {
         async fn put_with_on_completed_callback(
             &self,
             key: CacheKey,
-            image: bytes::Bytes,
+            data: bytes::Bytes,
             metadata: ImageMetadata,
             on_complete: Sender<CacheEntry>,
         ) -> Result<(), CacheError> {
-            todo!()
+            self.put(key.clone(), data.clone(), metadata.clone())
+                .await?;
+            let on_disk_size = data.len() as u64;
+            let _ = on_complete
+                .send(CacheEntry {
+                    key,
+                    data,
+                    metadata,
+                    on_disk_size,
+                })
+                .await;
+            Ok(())
         }
     }
 
@@ -287,7 +298,7 @@ mod cache_ops {
     use futures::{FutureExt, StreamExt};
 
     use crate::cache::mem::InternalMemoryCache;
-    use crate::cache::{Cache, CacheKey, CacheStream, ImageMetadata, MemStream};
+    use crate::cache::{Cache, CacheEntry, CacheKey, CacheStream, ImageMetadata, MemStream};
 
     use super::test_util::{TestDiskCache, TestMemoryCache};
     use super::MemoryCache;
@@ -406,6 +417,53 @@ mod cache_ops {
         let key = CacheKey("a".to_string(), "b".to_string(), false);
         assert!(cache.get(&key).await.is_none());
         assert!(rx.recv().now_or_never().is_none());
+    }
+
+    #[tokio::test]
+    async fn put_puts_into_disk_and_hears_from_rx() -> Result<(), Box<dyn Error>> {
+        let (cache, mut rx) = MemoryCache::<TestMemoryCache, _>::new_with_receiver(
+            TestDiskCache::default(),
+            crate::units::Bytes(10),
+        );
+
+        let key = CacheKey("a".to_string(), "b".to_string(), false);
+        let metadata = ImageMetadata {
+            content_type: None,
+            content_length: Some(1),
+            last_modified: None,
+        };
+        let bytes = Bytes::from_static(b"abcd");
+        let bytes_len = bytes.len() as u64;
+
+        cache
+            .put(key.clone(), bytes.clone(), metadata.clone())
+            .await?;
+
+        // Because the callback is supposed to let the memory cache insert the
+        // entry into its cache, we can check that it properly stored it on the
+        // disk layer by checking if we can successfully fetch it.
+
+        let (mut stream, ret_metadata) = cache.get(&key).await.unwrap()?;
+        assert_eq!(metadata, ret_metadata);
+        assert!(matches!(stream, CacheStream::Completed(_)));
+        assert_eq!(stream.next().await, Some(Ok(bytes.clone())));
+
+        // Check that we heard back
+        let cache_entry = rx
+            .recv()
+            .now_or_never()
+            .flatten()
+            .ok_or("failed to hear back from cache")?;
+        assert_eq!(
+            cache_entry,
+            CacheEntry {
+                key,
+                data: bytes,
+                metadata,
+                on_disk_size: bytes_len,
+            }
+        );
+        Ok(())
     }
 }
 
