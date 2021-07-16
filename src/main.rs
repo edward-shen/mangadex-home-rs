@@ -172,8 +172,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let cache = DiskCache::new(disk_quota.into(), cache_path.clone()).await;
     let cache: Arc<dyn Cache> = match cache_type {
         CacheType::OnDisk => cache,
-        CacheType::Lru => MemoryCache::<Lfu, _>::new(cache, memory_max_size).await,
-        CacheType::Lfu => MemoryCache::<Lru, _>::new(cache, memory_max_size).await,
+        CacheType::Lru => MemoryCache::<Lfu, _>::new(cache, memory_max_size),
+        CacheType::Lfu => MemoryCache::<Lru, _>::new(cache, memory_max_size),
     };
 
     let cache_0 = Arc::clone(&cache);

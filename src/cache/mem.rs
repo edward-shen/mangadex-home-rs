@@ -83,7 +83,7 @@ where
     MemoryCacheImpl: 'static + InternalMemoryCache,
     ColdCache: 'static + Cache,
 {
-    pub async fn new(inner: ColdCache, max_mem_size: crate::units::Bytes) -> Arc<Self> {
+    pub fn new(inner: ColdCache, max_mem_size: crate::units::Bytes) -> Arc<Self> {
         let (tx, rx) = channel(100);
         let new_self = Arc::new(Self {
             inner,
