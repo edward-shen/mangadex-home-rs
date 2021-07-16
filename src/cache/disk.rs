@@ -125,6 +125,8 @@ async fn db_listener(
     db_pool: SqlitePool,
     max_on_disk_size: u64,
 ) {
+    // This is in a receiver stream to process up to 128 simultaneous db updates
+    // in one transaction
     let mut recv_stream = ReceiverStream::new(db_rx).ready_chunks(128);
     while let Some(messages) = recv_stream.next().await {
         let mut transaction = match db_pool.begin().await {
