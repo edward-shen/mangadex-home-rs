@@ -30,3 +30,17 @@ pub async fn send_stop(secret: &ClientSecret) {
         Err(e) => warn!("Got error while sending stop message: {}", e),
     }
 }
+
+#[cfg(test)]
+mod stop {
+    use super::CONTROL_CENTER_STOP_URL;
+
+    #[test]
+    fn stop_url_does_not_have_ping_in_url() {
+        // This looks like a dumb test, yes, but it ensures that clients don't
+        // get marked compromised because apparently just sending a json obj
+        // with just the secret is acceptable to the ping endpoint, which messes
+        // up non-trivial client configs.
+        assert!(!CONTROL_CENTER_STOP_URL.contains("ping"))
+    }
+}
