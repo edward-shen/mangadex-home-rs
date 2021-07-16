@@ -129,7 +129,7 @@ async fn internal_cache_listener<MemoryCacheImpl, ColdCache>(
     MemoryCacheImpl: InternalMemoryCache,
     ColdCache: Cache,
 {
-    let max_mem_size = max_mem_size.get() / 20 * 19;
+    let max_mem_size = mem_threshold(&max_mem_size);
     while let Some(CacheEntry {
         key,
         data,
@@ -163,6 +163,10 @@ async fn internal_cache_listener<MemoryCacheImpl, ColdCache>(
             }
         }
     }
+}
+
+const fn mem_threshold(bytes: &crate::units::Bytes) -> usize {
+    bytes.get() / 20 * 19
 }
 
 #[async_trait]
@@ -203,7 +207,7 @@ where
 #[cfg(test)]
 mod test_util {
     use std::cell::RefCell;
-    use std::collections::HashMap;
+    use std::collections::{BTreeMap, HashMap};
 
     use super::{CacheValue, InternalMemoryCache};
     use crate::cache::{
@@ -269,7 +273,7 @@ mod test_util {
     }
 
     #[derive(Default)]
-    pub struct TestMemoryCache(pub HashMap<CacheKey, CacheValue>);
+    pub struct TestMemoryCache(pub BTreeMap<CacheKey, CacheValue>);
 
     impl InternalMemoryCache for TestMemoryCache {
         fn unbounded() -> Self {
@@ -285,7 +289,12 @@ mod test_util {
         }
 
         fn pop(&mut self) -> Option<(CacheKey, CacheValue)> {
-            unimplemented!("shouldn't be needed for tests");
+            let mut cache = BTreeMap::new();
+            std::mem::swap(&mut cache, &mut self.0);
+            let mut iter = cache.into_iter();
+            let ret = iter.next();
+            self.0 = iter.collect();
+            ret
         }
     }
 }
@@ -469,5 +478,133 @@ mod cache_ops {
 
 #[cfg(test)]
 mod db_listener {
-    use super::*;
+    use std::error::Error;
+    use std::iter::FromIterator;
+    use std::sync::atomic::Ordering;
+    use std::sync::Arc;
+
+    use bytes::Bytes;
+    use tokio::task;
+
+    use crate::cache::{Cache, CacheKey, ImageMetadata};
+
+    use super::test_util::{TestDiskCache, TestMemoryCache};
+    use super::{internal_cache_listener, MemoryCache};
+
+    #[tokio::test]
+    async fn put_into_memory() -> Result<(), Box<dyn Error>> {
+        let (cache, rx) = MemoryCache::<TestMemoryCache, _>::new_with_receiver(
+            TestDiskCache::default(),
+            crate::units::Bytes(0),
+        );
+        let cache = Arc::new(cache);
+        tokio::spawn(internal_cache_listener(
+            Arc::clone(&cache),
+            crate::units::Bytes(20),
+            rx,
+        ));
+
+        // put small image into memory
+        let key = CacheKey("a".to_string(), "b".to_string(), false);
+        let metadata = ImageMetadata {
+            content_type: None,
+            content_length: Some(1),
+            last_modified: None,
+        };
+        let bytes = Bytes::from_static(b"abcd");
+        cache.put(key.clone(), bytes.clone(), metadata).await?;
+
+        // let the listener run first
+        for _ in 0..10 {
+            task::yield_now().await;
+        }
+
+        assert_eq!(
+            cache.cur_mem_size.load(Ordering::SeqCst),
+            bytes.len() as u64
+        );
+
+        // Since we didn't populate the cache, fetching must be from memory, so
+        // this should succeed since the cache listener should push the item
+        // into cache
+        assert!(cache.get(&key).await.is_some());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pops_items() -> Result<(), Box<dyn Error>> {
+        let (cache, rx) = MemoryCache::<TestMemoryCache, _>::new_with_receiver(
+            TestDiskCache::default(),
+            crate::units::Bytes(0),
+        );
+        let cache = Arc::new(cache);
+        tokio::spawn(internal_cache_listener(
+            Arc::clone(&cache),
+            crate::units::Bytes(20),
+            rx,
+        ));
+
+        // put small image into memory
+        let key_0 = CacheKey("a".to_string(), "b".to_string(), false);
+        let key_1 = CacheKey("c".to_string(), "d".to_string(), false);
+        let metadata = ImageMetadata {
+            content_type: None,
+            content_length: Some(1),
+            last_modified: None,
+        };
+        let bytes = Bytes::from_static(b"abcde");
+
+        cache.put(key_0, bytes.clone(), metadata.clone()).await?;
+        cache.put(key_1, bytes.clone(), metadata).await?;
+
+        // let the listener run first
+        task::yield_now().await;
+        for _ in 0..10 {
+            task::yield_now().await;
+        }
+
+        // Items should be in cache now
+        assert_eq!(
+            cache.cur_mem_size.load(Ordering::SeqCst),
+            (bytes.len() * 2) as u64
+        );
+
+        let key_3 = CacheKey("e".to_string(), "f".to_string(), false);
+        let metadata = ImageMetadata {
+            content_type: None,
+            content_length: Some(1),
+            last_modified: None,
+        };
+        let bytes = Bytes::from_iter(b"0".repeat(16).into_iter());
+        let bytes_len = bytes.len();
+        cache.put(key_3, bytes, metadata).await?;
+
+        // let the listener run first
+        task::yield_now().await;
+        for _ in 0..10 {
+            task::yield_now().await;
+        }
+
+        // Items should have been evicted, only 16 bytes should be there now
+        assert_eq!(cache.cur_mem_size.load(Ordering::SeqCst), bytes_len as u64);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod mem_threshold {
+    use crate::units::Bytes;
+
+    use super::mem_threshold;
+
+    #[test]
+    fn small_amount_works() {
+        assert_eq!(mem_threshold(&Bytes(100)), 95);
+    }
+
+    #[test]
+    fn large_amount_cannot_overflow() {
+        assert_eq!(mem_threshold(&Bytes(usize::MAX)), 17524406870024074020);
+    }
 }

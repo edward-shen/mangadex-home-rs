@@ -32,7 +32,7 @@ mod disk;
 mod fs;
 pub mod mem;
 
-#[derive(PartialEq, Eq, Hash, Clone, Debug)]
+#[derive(PartialEq, Eq, Hash, Clone, Debug, PartialOrd, Ord)]
 pub struct CacheKey(pub String, pub String, pub bool);
 
 impl Display for CacheKey {
