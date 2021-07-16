@@ -181,7 +181,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Start HTTPS server
     let server = HttpServer::new(move || {
         App::new()
-            .wrap(actix_web::middleware::Compress::default())
             .wrap_fn(|req, srv| {
                 if let Some(reader) = GEOIP_DATABASE.get() {
                     let maybe_country = req
