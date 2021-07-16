@@ -65,7 +65,7 @@ pub(super) async fn read_file(
 
     let parsed_metadata;
     let mut maybe_header = None;
-    let mut reader: Option<Pin<Box<dyn MetadataFetch + Send>>> = None;
+    let mut reader: Option<Pin<Box<dyn MetadataFetch + Send + Sync>>> = None;
     if let Ok(metadata) = maybe_metadata {
         // image is decrypted
         if ENCRYPTION_KEY.get().is_some() {

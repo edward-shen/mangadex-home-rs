@@ -241,7 +241,7 @@ pub struct CacheEntry {
 
 pub enum CacheStream {
     Memory(MemStream),
-    Completed(FramedRead<Pin<Box<dyn MetadataFetch + Send>>, BytesCodec>),
+    Completed(FramedRead<Pin<Box<dyn MetadataFetch + Send + Sync>>, BytesCodec>),
 }
 
 impl From<CachedImage> for CacheStream {
