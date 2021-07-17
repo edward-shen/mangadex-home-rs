@@ -84,8 +84,11 @@ impl CachingClient {
         key: CacheKey,
         cache: Data<dyn Cache>,
     ) -> FetchResult {
-        if let Some(recv) = self.locks.read().get(&url) {
-            let mut recv = recv.clone();
+        let maybe_receiver = {
+            let lock = self.locks.read();
+            lock.get(&url).map(Clone::clone)
+        };
+        if let Some(mut recv) = maybe_receiver {
             loop {
                 if !matches!(*recv.borrow(), FetchResult::Processing) {
                     break;
@@ -97,100 +100,17 @@ impl CachingClient {
 
             return recv.borrow().clone();
         }
-        let url_0 = url.clone();
 
         let notify = Arc::new(Notify::new());
-        let notify2 = Arc::clone(&notify);
+        tokio::spawn(self.fetch_and_cache_impl(cache, url.clone(), key, Arc::clone(&notify)));
+        notify.notified().await;
 
-        tokio::spawn(async move {
-            let (tx, rx) = channel(FetchResult::Processing);
-
-            self.locks.write().insert(url.clone(), rx);
-            notify.notify_one();
-            let resp = self.inner.get(&url).send().await;
-
-            let resp = match resp {
-                Ok(mut resp) => {
-                    let content_type = resp.headers().get(CONTENT_TYPE);
-
-                    let is_image = content_type
-                        .map(|v| String::from_utf8_lossy(v.as_ref()).contains("image/"))
-                        .unwrap_or_default();
-
-                    if resp.status() != StatusCode::OK || !is_image {
-                        warn!("Got non-OK or non-image response code from upstream, proxying and not caching result.");
-
-                        let mut headers = DEFAULT_HEADERS.clone();
-
-                        if let Some(content_type) = content_type {
-                            headers.insert(CONTENT_TYPE, content_type.clone());
-                        }
-
-                        FetchResult::Data(
-                            resp.status(),
-                            headers,
-                            resp.bytes().await.unwrap_or_default(),
-                        )
-                    } else {
-                        let (content_type, length, last_mod) = {
-                            let headers = resp.headers_mut();
-                            (
-                                headers.remove(CONTENT_TYPE),
-                                headers.remove(CONTENT_LENGTH),
-                                headers.remove(LAST_MODIFIED),
-                            )
-                        };
-
-                        let body = resp.bytes().await.unwrap();
-
-                        debug!("Inserting into cache");
-
-                        let metadata = ImageMetadata::new(
-                            content_type.clone(),
-                            length.clone(),
-                            last_mod.clone(),
-                        )
-                        .unwrap();
-
-                        match cache.put(key, body.clone(), metadata).await {
-                            Ok(()) => {
-                                debug!("Done putting into cache");
-
-                                let mut headers = DEFAULT_HEADERS.clone();
-                                if let Some(content_type) = content_type {
-                                    headers.insert(CONTENT_TYPE, content_type);
-                                }
-
-                                if let Some(content_length) = length {
-                                    headers.insert(CONTENT_LENGTH, content_length);
-                                }
-
-                                if let Some(last_modified) = last_mod {
-                                    headers.insert(LAST_MODIFIED, last_modified);
-                                }
-
-                                FetchResult::Data(StatusCode::OK, headers, body)
-                            }
-                            Err(e) => {
-                                warn!("Failed to insert into cache: {}", e);
-                                FetchResult::InternalServerError
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    error!("Failed to fetch image from server: {}", e);
-                    FetchResult::ServiceUnavailable
-                }
-            };
-            // This shouldn't happen
-            tx.send(resp).unwrap();
-            self.locks.write().remove(&url);
-        });
-
-        notify2.notified().await;
-
-        let mut recv = self.locks.read().get(&url_0).unwrap().clone();
+        let mut recv = self
+            .locks
+            .read()
+            .get(&url)
+            .expect("receiver to exist since we just made one")
+            .clone();
         loop {
             if !matches!(*recv.borrow(), FetchResult::Processing) {
                 break;
@@ -201,6 +121,95 @@ impl CachingClient {
         }
         let resp = recv.borrow().clone();
         resp
+    }
+
+    async fn fetch_and_cache_impl(
+        &self,
+        cache: Data<dyn Cache>,
+        url: String,
+        key: CacheKey,
+        notify: Arc<Notify>,
+    ) {
+        let (tx, rx) = channel(FetchResult::Processing);
+
+        self.locks.write().insert(url.clone(), rx);
+        notify.notify_one();
+        let resp = self.inner.get(&url).send().await;
+
+        let resp = match resp {
+            Ok(mut resp) => {
+                let content_type = resp.headers().get(CONTENT_TYPE);
+
+                let is_image = content_type
+                    .map(|v| String::from_utf8_lossy(v.as_ref()).contains("image/"))
+                    .unwrap_or_default();
+
+                if resp.status() != StatusCode::OK || !is_image {
+                    warn!("Got non-OK or non-image response code from upstream, proxying and not caching result.");
+
+                    let mut headers = DEFAULT_HEADERS.clone();
+
+                    if let Some(content_type) = content_type {
+                        headers.insert(CONTENT_TYPE, content_type.clone());
+                    }
+
+                    FetchResult::Data(
+                        resp.status(),
+                        headers,
+                        resp.bytes().await.unwrap_or_default(),
+                    )
+                } else {
+                    let (content_type, length, last_mod) = {
+                        let headers = resp.headers_mut();
+                        (
+                            headers.remove(CONTENT_TYPE),
+                            headers.remove(CONTENT_LENGTH),
+                            headers.remove(LAST_MODIFIED),
+                        )
+                    };
+
+                    let body = resp.bytes().await.unwrap();
+
+                    debug!("Inserting into cache");
+
+                    let metadata =
+                        ImageMetadata::new(content_type.clone(), length.clone(), last_mod.clone())
+                            .unwrap();
+
+                    match cache.put(key, body.clone(), metadata).await {
+                        Ok(()) => {
+                            debug!("Done putting into cache");
+
+                            let mut headers = DEFAULT_HEADERS.clone();
+                            if let Some(content_type) = content_type {
+                                headers.insert(CONTENT_TYPE, content_type);
+                            }
+
+                            if let Some(content_length) = length {
+                                headers.insert(CONTENT_LENGTH, content_length);
+                            }
+
+                            if let Some(last_modified) = last_mod {
+                                headers.insert(LAST_MODIFIED, last_modified);
+                            }
+
+                            FetchResult::Data(StatusCode::OK, headers, body)
+                        }
+                        Err(e) => {
+                            warn!("Failed to insert into cache: {}", e);
+                            FetchResult::InternalServerError
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                error!("Failed to fetch image from server: {}", e);
+                FetchResult::ServiceUnavailable
+            }
+        };
+        // This shouldn't happen
+        tx.send(resp).unwrap();
+        self.locks.write().remove(&url);
     }
 
     #[inline]

@@ -66,7 +66,7 @@ impl ToRedisArgs for CacheValue {
     where
         W: ?Sized + redis::RedisWrite,
     {
-        out.write_arg(&bincode::serialize(self).expect("serialization to work"))
+        out.write_arg(&bincode::serialize(self).expect("serialization to work"));
     }
 }
 

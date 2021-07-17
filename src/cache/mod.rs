@@ -41,7 +41,7 @@ impl ToRedisArgs for CacheKey {
     where
         W: ?Sized + redis::RedisWrite,
     {
-        out.write_arg_fmt(self)
+        out.write_arg_fmt(self);
     }
 }
 
