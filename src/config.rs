@@ -109,6 +109,7 @@ pub struct Config {
     pub enable_metrics: bool,
     pub geoip_license_key: Option<ClientSecret>,
     pub proxy: Option<Url>,
+    pub redis_url: Option<Url>,
 }
 
 impl Config {
@@ -210,6 +211,7 @@ impl Config {
                 }
             }),
             proxy: cli_args.proxy,
+            redis_url: file_extended_options.redis_url,
         }
     }
 }
@@ -236,6 +238,7 @@ pub enum CacheType {
     OnDisk,
     Lru,
     Lfu,
+    Redis,
 }
 
 impl FromStr for CacheType {
@@ -246,6 +249,7 @@ impl FromStr for CacheType {
             "on_disk" => Ok(Self::OnDisk),
             "lru" => Ok(Self::Lru),
             "lfu" => Ok(Self::Lfu),
+            "redis" => Ok(Self::Redis),
             _ => Err(format!("Unknown option: {}", s)),
         }
     }
@@ -294,6 +298,7 @@ struct YamlExtendedOptions {
     enable_metrics: Option<bool>,
     logging_level: Option<LevelFilter>,
     cache_path: Option<PathBuf>,
+    redis_url: Option<Url>,
 }
 
 #[derive(Clap, Clone)]
@@ -341,7 +346,7 @@ struct CliArgs {
     #[clap(short, long)]
     pub config_path: Option<PathBuf>,
     /// Whether to use an in-memory cache in addition to the disk cache. Default
-    /// value is "on_disk", other options are "lfu" and "lru".
+    /// value is "on_disk", other options are "lfu", "lru", and "redis".
     #[clap(short = 't', long)]
     pub cache_type: Option<CacheType>,
     /// Whether or not to use a proxy for upstream requests. This affects all
@@ -457,6 +462,7 @@ mod config {
                 enable_metrics: None,
                 logging_level: Some(LevelFilter::Error),
                 cache_path: Some(PathBuf::from("b")),
+                redis_url: None,
             }),
         };
 

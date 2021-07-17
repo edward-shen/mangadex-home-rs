@@ -12,6 +12,7 @@ use chacha20::Key;
 use chrono::{DateTime, FixedOffset};
 use futures::{Stream, StreamExt};
 use once_cell::sync::OnceCell;
+use redis::ToRedisArgs;
 use serde::{Deserialize, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
 use thiserror::Error;
@@ -34,6 +35,15 @@ pub mod mem;
 
 #[derive(PartialEq, Eq, Hash, Clone, Debug, PartialOrd, Ord)]
 pub struct CacheKey(pub String, pub String, pub bool);
+
+impl ToRedisArgs for CacheKey {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + redis::RedisWrite,
+    {
+        out.write_arg_fmt(self)
+    }
+}
 
 impl Display for CacheKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

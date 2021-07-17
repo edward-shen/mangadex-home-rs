@@ -26,7 +26,7 @@ arc-swap = "1"
 async-trait = "0.1"
 base64 = "0.13"
 bincode = "1"
-bytes = "1"
+bytes = { version = "1", features = [ "serde" ] }
 chacha20 = "0.7"
 chrono = { version = "0.4", features = [ "serde" ] }
 clap = { version = "3.0.0-beta.2", features = [ "wrap_help" ] }
@@ -42,6 +42,7 @@ maxminddb = "0.20"
 md-5 = "0.9"
 parking_lot = "0.11"
 prometheus = { version = "0.12", features = [ "process" ] }
+redis = "0.21"
 reqwest = { version = "0.11", default_features = false, features = [ "json", "stream", "rustls-tls" ] }
 rustls = "0.19"
 serde = "1"

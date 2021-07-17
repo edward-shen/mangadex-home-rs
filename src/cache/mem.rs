@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -7,10 +8,67 @@ use bytes::Bytes;
 use futures::FutureExt;
 use lfu_cache::LfuCache;
 use lru::LruCache;
+use redis::{
+    Client as RedisClient, Commands, FromRedisValue, RedisError, RedisResult, ToRedisArgs,
+};
+use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::Mutex;
+use tracing::warn;
 
-type CacheValue = (Bytes, ImageMetadata, u64);
+#[derive(Clone, Serialize, Deserialize)]
+pub struct CacheValue {
+    data: Bytes,
+    metadata: ImageMetadata,
+    on_disk_size: u64,
+}
+
+impl CacheValue {
+    #[inline]
+    fn new(data: Bytes, metadata: ImageMetadata, on_disk_size: u64) -> Self {
+        Self {
+            data,
+            metadata,
+            on_disk_size,
+        }
+    }
+}
+
+impl FromRedisValue for CacheValue {
+    fn from_redis_value(v: &redis::Value) -> RedisResult<Self> {
+        use bincode::ErrorKind;
+
+        if let redis::Value::Data(data) = v {
+            bincode::deserialize(data).map_err(|err| match *err {
+                ErrorKind::Io(e) => RedisError::from(e),
+                ErrorKind::Custom(e) => RedisError::from((
+                    redis::ErrorKind::ResponseError,
+                    "bincode deserialize failed",
+                    e,
+                )),
+                e => RedisError::from((
+                    redis::ErrorKind::ResponseError,
+                    "bincode deserialized failed",
+                    e.to_string(),
+                )),
+            })
+        } else {
+            Err(RedisError::from((
+                redis::ErrorKind::TypeError,
+                "Got non data type from redis db",
+            )))
+        }
+    }
+}
+
+impl ToRedisArgs for CacheValue {
+    fn write_redis_args<W>(&self, out: &mut W)
+    where
+        W: ?Sized + redis::RedisWrite,
+    {
+        out.write_arg(&bincode::serialize(self).expect("serialization to work"))
+    }
+}
 
 /// Use LRU as the eviction strategy
 pub type Lru = LruCache<CacheKey, CacheValue>;
@@ -18,22 +76,27 @@ pub type Lru = LruCache<CacheKey, CacheValue>;
 pub type Lfu = LfuCache<CacheKey, CacheValue>;
 
 /// Adapter trait for memory cache backends
+pub trait InternalMemoryCacheInitializer: InternalMemoryCache {
+    fn new() -> Self;
+}
+
 pub trait InternalMemoryCache: Sync + Send {
-    fn unbounded() -> Self;
-    fn get(&mut self, key: &CacheKey) -> Option<&CacheValue>;
+    fn get(&mut self, key: &CacheKey) -> Option<Cow<CacheValue>>;
     fn push(&mut self, key: CacheKey, data: CacheValue);
     fn pop(&mut self) -> Option<(CacheKey, CacheValue)>;
 }
 
-impl InternalMemoryCache for Lfu {
+impl InternalMemoryCacheInitializer for Lfu {
     #[inline]
-    fn unbounded() -> Self {
+    fn new() -> Self {
         Self::unbounded()
     }
+}
 
+impl InternalMemoryCache for Lfu {
     #[inline]
-    fn get(&mut self, key: &CacheKey) -> Option<&CacheValue> {
-        self.get(key)
+    fn get(&mut self, key: &CacheKey) -> Option<Cow<CacheValue>> {
+        self.get(key).map(Cow::Borrowed)
     }
 
     #[inline]
@@ -47,15 +110,17 @@ impl InternalMemoryCache for Lfu {
     }
 }
 
-impl InternalMemoryCache for Lru {
+impl InternalMemoryCacheInitializer for Lru {
     #[inline]
-    fn unbounded() -> Self {
+    fn new() -> Self {
         Self::unbounded()
     }
+}
 
+impl InternalMemoryCache for Lru {
     #[inline]
-    fn get(&mut self, key: &CacheKey) -> Option<&CacheValue> {
-        self.get(key)
+    fn get(&mut self, key: &CacheKey) -> Option<Cow<CacheValue>> {
+        self.get(key).map(Cow::Borrowed)
     }
 
     #[inline]
@@ -66,6 +131,22 @@ impl InternalMemoryCache for Lru {
     #[inline]
     fn pop(&mut self) -> Option<(CacheKey, CacheValue)> {
         self.pop_lru()
+    }
+}
+
+impl InternalMemoryCache for RedisClient {
+    fn get(&mut self, key: &CacheKey) -> Option<Cow<CacheValue>> {
+        Commands::get(self, key).ok().map(Cow::Owned)
+    }
+
+    fn push(&mut self, key: CacheKey, data: CacheValue) {
+        if let Err(e) = Commands::set::<_, _, ()>(self, key, data) {
+            warn!("Failed to push to redis: {}", e);
+        }
+    }
+
+    fn pop(&mut self) -> Option<(CacheKey, CacheValue)> {
+        unimplemented!("redis should handle its own memory")
     }
 }
 
@@ -80,7 +161,7 @@ pub struct MemoryCache<MemoryCacheImpl, ColdCache> {
 
 impl<MemoryCacheImpl, ColdCache> MemoryCache<MemoryCacheImpl, ColdCache>
 where
-    MemoryCacheImpl: 'static + InternalMemoryCache,
+    MemoryCacheImpl: 'static + InternalMemoryCacheInitializer,
     ColdCache: 'static + Cache,
 {
     pub fn new(inner: ColdCache, max_mem_size: crate::units::Bytes) -> Arc<Self> {
@@ -88,7 +169,7 @@ where
         let new_self = Arc::new(Self {
             inner,
             cur_mem_size: AtomicU64::new(0),
-            mem_cache: Mutex::new(MemoryCacheImpl::unbounded()),
+            mem_cache: Mutex::new(MemoryCacheImpl::new()),
             master_sender: tx,
         });
 
@@ -113,11 +194,26 @@ where
             Self {
                 inner,
                 cur_mem_size: AtomicU64::new(0),
-                mem_cache: Mutex::new(MemoryCacheImpl::unbounded()),
+                mem_cache: Mutex::new(MemoryCacheImpl::new()),
                 master_sender: tx,
             },
             rx,
         )
+    }
+}
+
+impl<MemoryCacheImpl, ColdCache> MemoryCache<MemoryCacheImpl, ColdCache>
+where
+    MemoryCacheImpl: 'static + InternalMemoryCache,
+    ColdCache: 'static + Cache,
+{
+    pub fn new_with_cache(inner: ColdCache, init_mem_cache: MemoryCacheImpl) -> Self {
+        Self {
+            inner,
+            cur_mem_size: AtomicU64::new(0),
+            mem_cache: Mutex::new(init_mem_cache),
+            master_sender: channel(1).0,
+        }
     }
 }
 
@@ -146,16 +242,20 @@ async fn internal_cache_listener<MemoryCacheImpl, ColdCache>(
             .mem_cache
             .lock()
             .await
-            .push(key, (data, metadata, on_disk_size));
+            .push(key, CacheValue::new(data, metadata, on_disk_size));
 
         // Pop if too large
         while cache.cur_mem_size.load(Ordering::Acquire) >= max_mem_size as u64 {
-            let popped = cache
-                .mem_cache
-                .lock()
-                .await
-                .pop()
-                .map(|(key, (bytes, metadata, size))| (key, bytes, metadata, size));
+            let popped = cache.mem_cache.lock().await.pop().map(
+                |(
+                    key,
+                    CacheValue {
+                        data,
+                        metadata,
+                        on_disk_size,
+                    },
+                )| (key, data, metadata, on_disk_size),
+            );
             if let Some((_, _, _, size)) = popped {
                 cache.cur_mem_size.fetch_sub(size as u64, Ordering::Release);
             } else {
@@ -181,12 +281,16 @@ where
         key: &CacheKey,
     ) -> Option<Result<(CacheStream, ImageMetadata), super::CacheError>> {
         match self.mem_cache.lock().now_or_never() {
-            Some(mut mem_cache) => match mem_cache.get(key).map(|(bytes, metadata, _)| {
-                Ok((CacheStream::Memory(MemStream(bytes.clone())), *metadata))
-            }) {
-                Some(v) => Some(v),
-                None => self.inner.get(key).await,
-            },
+            Some(mut mem_cache) => {
+                match mem_cache.get(key).map(Cow::into_owned).map(
+                    |CacheValue { data, metadata, .. }| {
+                        Ok((CacheStream::Memory(MemStream(data)), metadata))
+                    },
+                ) {
+                    Some(v) => Some(v),
+                    None => self.inner.get(key).await,
+                }
+            }
             None => self.inner.get(key).await,
         }
     }
@@ -206,10 +310,11 @@ where
 
 #[cfg(test)]
 mod test_util {
+    use std::borrow::Cow;
     use std::cell::RefCell;
     use std::collections::{BTreeMap, HashMap};
 
-    use super::{CacheValue, InternalMemoryCache};
+    use super::{CacheValue, InternalMemoryCache, InternalMemoryCacheInitializer};
     use crate::cache::{
         Cache, CacheEntry, CacheError, CacheKey, CacheStream, CallbackCache, ImageMetadata,
     };
@@ -275,13 +380,15 @@ mod test_util {
     #[derive(Default)]
     pub struct TestMemoryCache(pub BTreeMap<CacheKey, CacheValue>);
 
-    impl InternalMemoryCache for TestMemoryCache {
-        fn unbounded() -> Self {
+    impl InternalMemoryCacheInitializer for TestMemoryCache {
+        fn new() -> Self {
             Self::default()
         }
+    }
 
-        fn get(&mut self, key: &CacheKey) -> Option<&CacheValue> {
-            self.0.get(key)
+    impl InternalMemoryCache for TestMemoryCache {
+        fn get(&mut self, key: &CacheKey) -> Option<Cow<CacheValue>> {
+            self.0.get(key).map(Cow::Borrowed)
         }
 
         fn push(&mut self, key: CacheKey, data: CacheValue) {
@@ -306,7 +413,7 @@ mod cache_ops {
     use bytes::Bytes;
     use futures::{FutureExt, StreamExt};
 
-    use crate::cache::mem::InternalMemoryCache;
+    use crate::cache::mem::{CacheValue, InternalMemoryCache};
     use crate::cache::{Cache, CacheEntry, CacheKey, CacheStream, ImageMetadata, MemStream};
 
     use super::test_util::{TestDiskCache, TestMemoryCache};
@@ -326,7 +433,7 @@ mod cache_ops {
             last_modified: None,
         };
         let bytes = Bytes::from_static(b"abcd");
-        let value = (bytes.clone(), metadata.clone(), 34);
+        let value = CacheValue::new(bytes.clone(), metadata.clone(), 34);
 
         // Populate the cache, need to drop the lock else it's considered locked
         // when we actually call the cache

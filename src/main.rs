@@ -21,6 +21,7 @@ use chacha20::Key;
 use config::Config;
 use maxminddb::geoip2;
 use parking_lot::RwLock;
+use redis::Client as RedisClient;
 use rustls::{NoClientAuth, ServerConfig};
 use sodiumoxide::crypto::stream::xchacha20::gen_key;
 use state::{RwLockServerState, ServerState};
@@ -81,6 +82,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .unstable_options
         .contains(&UnstableOptions::DisableTls);
     let bind_address = config.bind_address;
+    let redis_url = config.redis_url.clone();
 
     //
     // Logging and warnings
@@ -174,6 +176,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
         CacheType::OnDisk => cache,
         CacheType::Lru => MemoryCache::<Lfu, _>::new(cache, memory_max_size),
         CacheType::Lfu => MemoryCache::<Lru, _>::new(cache, memory_max_size),
+        CacheType::Redis => {
+            let url = redis_url.unwrap_or_else(|| {
+                url::Url::parse("redis://127.0.0.1/").expect("default redis url to be parsable")
+            });
+            info!("Trying to connect to redis instance at {}", url);
+            let mem_cache = RedisClient::open(url)?;
+            Arc::new(MemoryCache::new_with_cache(cache, mem_cache))
+        }
     };
 
     let cache_0 = Arc::clone(&cache);
