@@ -16,7 +16,7 @@ use md5::{Digest, Md5};
 use sodiumoxide::hex;
 use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::{ConnectOptions, Sqlite, SqlitePool, Transaction};
-use tokio::fs::{remove_file, rename, File};
+use tokio::fs::{create_dir_all, remove_file, rename, File};
 use tokio::join;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio_stream::wrappers::ReceiverStream;
@@ -43,6 +43,10 @@ impl DiskCache {
     /// This internally spawns a task that will wait for filesystem
     /// notifications when a file has been written.
     pub async fn new(disk_max_size: Bytes, disk_path: PathBuf) -> Arc<Self> {
+        if let Err(e) = create_dir_all(&disk_path).await {
+            error!("Failed to create cache folder: {}", e);
+        }
+
         let cache_path = disk_path.to_string_lossy();
         // Migrate old to new path
         if rename(
