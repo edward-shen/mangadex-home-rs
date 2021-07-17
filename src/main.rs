@@ -299,10 +299,6 @@ fn print_preamble_and_warnings(args: &Config) -> Result<(), Box<dyn Error>> {
         build_string
     );
 
-    if args.ephemeral_disk_encryption {
-        error!("Encrypted files are _very_ broken; caveat emptor!");
-    }
-
     if !args.unstable_options.is_empty() {
         warn!("Unstable options are enabled. These options should not be used in production!");
     }

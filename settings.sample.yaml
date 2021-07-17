@@ -93,8 +93,6 @@ extended_options:
   # "debug", "trace", and "off", which disables logging.
   # logging_level: info
 
-  # Warning: Experimental. Will cause problems.
-  #
   # Enables disk encryption where the key is stored in memory. In other words,
   # when the MD@H program is stopped, all cached files are irrecoverable.
   # Practically speaking, this isn't all too useful (and definitely hurts
