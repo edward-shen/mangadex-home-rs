@@ -2,9 +2,15 @@ A Rust implementation of a MangaDex@Home client.
 
 This client contains the following features:
 
- - Multi-threaded
- - HTTP/2 support
- - No support for TLS 1.1 or 1.0
+ - Easy migration from the official client
+ - Fully compliant with MangaDex@Home specifications
+ - Multi-threaded, high performance, and low overhead client
+ - HTTP/2 support for API users, HTTP/2 only for upstream connections
+ - Secure and privacy oriented features:
+   - Only supports TLS 1.2 or newer; HTTP is not enabled by default
+   - Options for no logging and no metrics
+   - Support for on-disk XChaCha20 encryption with ephemeral key generation
+ - Supports an internal LFU, LRU, or a redis instance for in-memory caching
 
 ## Building
 
