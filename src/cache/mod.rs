@@ -7,7 +7,7 @@ use std::task::{Context, Poll};
 
 use actix_web::http::HeaderValue;
 use async_trait::async_trait;
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use chacha20::Key;
 use chrono::{DateTime, FixedOffset};
 use futures::{Stream, StreamExt};
@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
 use thiserror::Error;
 use tokio::sync::mpsc::Sender;
-use tokio_util::codec::{BytesCodec, FramedRead};
+use tokio_util::io::ReaderStream;
 
 pub use disk::DiskCache;
 pub use fs::UpstreamError;
@@ -252,7 +252,7 @@ pub struct CacheEntry {
 
 pub enum CacheStream {
     Memory(MemStream),
-    Completed(FramedRead<Pin<Box<dyn MetadataFetch + Send + Sync>>, BytesCodec>),
+    Completed(ReaderStream<Pin<Box<dyn MetadataFetch + Send + Sync>>>),
 }
 
 impl From<CachedImage> for CacheStream {
@@ -269,10 +269,7 @@ impl Stream for CacheStream {
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match self.get_mut() {
             Self::Memory(stream) => stream.poll_next_unpin(cx),
-            Self::Completed(stream) => stream
-                .poll_next_unpin(cx)
-                .map_ok(BytesMut::freeze)
-                .map_err(|_| UpstreamError),
+            Self::Completed(stream) => stream.poll_next_unpin(cx).map_err(|_| UpstreamError),
         }
     }
 }

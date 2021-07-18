@@ -322,7 +322,7 @@ mod test_util {
     use parking_lot::Mutex;
     use tokio::io::BufReader;
     use tokio::sync::mpsc::Sender;
-    use tokio_util::codec::{BytesCodec, FramedRead};
+    use tokio_util::io::ReaderStream;
 
     #[derive(Default)]
     pub struct TestDiskCache(
@@ -347,7 +347,7 @@ mod test_util {
             let reader = Box::pin(BufReader::new(tokio_util::io::StreamReader::new(
                 tokio_stream::once(Ok::<_, std::io::Error>(image)),
             )));
-            let stream = CacheStream::Completed(FramedRead::new(reader, BytesCodec::new()));
+            let stream = CacheStream::Completed(ReaderStream::new(reader));
             self.0.lock().get_mut().insert(key, Ok((stream, metadata)));
             Ok(())
         }

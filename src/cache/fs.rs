@@ -35,7 +35,7 @@ use tokio::io::{
     ReadBuf,
 };
 use tokio::sync::mpsc::Sender;
-use tokio_util::codec::{BytesCodec, FramedRead};
+use tokio_util::io::ReaderStream;
 use tracing::{debug, instrument, warn};
 
 use super::compat::LegacyImageMetadata;
@@ -122,8 +122,7 @@ pub(super) async fn read_file(
     // successfully decoded the data; otherwise the file is garbage.
 
     if let Some(reader) = reader {
-        let stream =
-            CacheStream::Completed(FramedRead::new(reader as Pin<Box<_>>, BytesCodec::new()));
+        let stream = CacheStream::Completed(ReaderStream::new(reader));
         parsed_metadata.map(|metadata| Ok((stream, maybe_header, metadata)))
     } else {
         debug!("Reader was invalid, file is corrupt");
