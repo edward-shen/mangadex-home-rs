@@ -85,8 +85,6 @@ pub struct OkResponse {
     pub token_key: Option<String>,
     pub compromised: bool,
     pub paused: bool,
-    #[serde(default)]
-    pub force_tokens: bool,
     pub tls: Option<Tls>,
 }
 
@@ -207,19 +205,6 @@ pub async fn update_server_state(
                     } else {
                         error!("Failed to parse token key: got {}", key);
                     }
-                }
-
-                if !cli
-                    .unstable_options
-                    .contains(&UnstableOptions::DisableTokenValidation)
-                    && VALIDATE_TOKENS.load(Ordering::Acquire) != resp.force_tokens
-                {
-                    if resp.force_tokens {
-                        info!("Client received command to enforce token validity.");
-                    } else {
-                        info!("Client received command to no longer enforce token validity");
-                    }
-                    VALIDATE_TOKENS.store(resp.force_tokens, Ordering::Release);
                 }
 
                 if let Some(tls) = resp.tls {

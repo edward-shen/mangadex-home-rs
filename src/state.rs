@@ -90,20 +90,6 @@ impl ServerState {
 
                     info!("This client's URL has been set to {}", resp.url);
 
-                    if config
-                        .unstable_options
-                        .contains(&UnstableOptions::DisableTokenValidation)
-                    {
-                        warn!("Token validation is explicitly disabled!");
-                    } else {
-                        if resp.force_tokens {
-                            info!("This client will validate tokens.");
-                        } else {
-                            info!("This client will not validate tokens.");
-                        }
-                        VALIDATE_TOKENS.store(resp.force_tokens, Ordering::Release);
-                    }
-
                     let tls = resp.tls.unwrap();
                     std::mem::drop(
                         TLS_PREVIOUSLY_CREATED.set(ArcSwap::from_pointee(tls.created_at)),
