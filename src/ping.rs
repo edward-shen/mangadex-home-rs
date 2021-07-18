@@ -13,7 +13,7 @@ use tracing::{debug, error, info, warn};
 use url::Url;
 
 use crate::client::HTTP_CLIENT;
-use crate::config::{ClientSecret, Config, UnstableOptions, VALIDATE_TOKENS};
+use crate::config::{ClientSecret, Config};
 use crate::state::{
     RwLockServerState, PREVIOUSLY_COMPROMISED, PREVIOUSLY_PAUSED, TLS_CERTS,
     TLS_PREVIOUSLY_CREATED, TLS_SIGNING_KEY,

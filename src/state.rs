@@ -2,7 +2,7 @@ use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::client::HTTP_CLIENT;
-use crate::config::{ClientSecret, Config, UnstableOptions, OFFLINE_MODE, VALIDATE_TOKENS};
+use crate::config::{ClientSecret, Config, OFFLINE_MODE};
 use crate::ping::{Request, Response, CONTROL_CENTER_PING_URL};
 use arc_swap::ArcSwap;
 use once_cell::sync::OnceCell;
