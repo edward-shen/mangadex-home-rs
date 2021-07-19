@@ -1,0 +1,10 @@
+# Ignore everything
+*
+
+# Only include necessary paths (This should be synchronized with `Cargo.toml`)
+!db_queries/
+!src/
+!settings.sample.yaml
+!sqlx-data.json
+!Cargo.toml
+!Cargo.lock
