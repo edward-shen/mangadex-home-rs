@@ -1,0 +1,9 @@
+version: "3.9"
+services:
+  mangadex-home:
+    build: .
+    ports:
+      - "443:443"
+    volumes:
+      - ./cache:/cache
+      - ./settings.yaml:/settings.yaml
