@@ -1,3 +1,4 @@
+use futures::Future;
 use std::fmt::Display;
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -16,6 +17,7 @@ use redis::ToRedisArgs;
 use serde::{Deserialize, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
 use thiserror::Error;
+use tokio::io::AsyncRead;
 use tokio::sync::mpsc::Sender;
 use tokio_util::io::ReaderStream;
 
@@ -24,7 +26,6 @@ pub use fs::UpstreamError;
 pub use mem::MemoryCache;
 
 use self::compat::LegacyImageMetadata;
-use self::fs::MetadataFetch;
 
 pub static ENCRYPTION_KEY: OnceCell<Key> = OnceCell::new();
 
@@ -70,7 +71,7 @@ impl From<&CacheKey> for PathBuf {
 }
 
 #[derive(Clone)]
-pub struct CachedImage(pub Bytes);
+pub struct CachedImage(pub Vec<u8>);
 
 #[derive(Copy, Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct ImageMetadata {
@@ -181,17 +182,18 @@ pub enum CacheError {
     DecryptionFailure,
 }
 
-#[async_trait]
 pub trait Cache: Send + Sync {
-    async fn get(&self, key: &CacheKey)
-        -> Option<Result<(CacheStream, ImageMetadata), CacheError>>;
+    fn get(
+        &self,
+        key: &CacheKey,
+    ) -> impl Future<Output = Option<Result<(CacheStream, ImageMetadata), CacheError>>>;
 
-    async fn put(
+    fn put(
         &self,
         key: CacheKey,
-        image: Bytes,
+        image: Vec<u8>,
         metadata: ImageMetadata,
-    ) -> Result<(), CacheError>;
+    ) -> impl Future<Output = Result<(), CacheError>>;
 }
 
 #[async_trait]
@@ -208,7 +210,7 @@ impl<T: Cache> Cache for Arc<T> {
     async fn put(
         &self,
         key: CacheKey,
-        image: Bytes,
+        image: Vec<u8>,
         metadata: ImageMetadata,
     ) -> Result<(), CacheError> {
         self.as_ref().put(key, image, metadata).await
@@ -220,7 +222,7 @@ pub trait CallbackCache: Cache {
     async fn put_with_on_completed_callback(
         &self,
         key: CacheKey,
-        image: Bytes,
+        image: Vec<u8>,
         metadata: ImageMetadata,
         on_complete: Sender<CacheEntry>,
     ) -> Result<(), CacheError>;
@@ -232,7 +234,7 @@ impl<T: CallbackCache> CallbackCache for Arc<T> {
     async fn put_with_on_completed_callback(
         &self,
         key: CacheKey,
-        image: Bytes,
+        image: Vec<u8>,
         metadata: ImageMetadata,
         on_complete: Sender<CacheEntry>,
     ) -> Result<(), CacheError> {
@@ -245,19 +247,19 @@ impl<T: CallbackCache> CallbackCache for Arc<T> {
 #[derive(PartialEq, Eq, Debug)]
 pub struct CacheEntry {
     key: CacheKey,
-    data: Bytes,
+    data: Vec<u8>,
     metadata: ImageMetadata,
     on_disk_size: u64,
 }
 
 pub enum CacheStream {
     Memory(MemStream),
-    Completed(ReaderStream<Pin<Box<dyn MetadataFetch + Send + Sync>>>),
+    Completed(ReaderStream<Pin<Box<dyn AsyncRead + Send + Sync>>>),
 }
 
 impl From<CachedImage> for CacheStream {
     fn from(image: CachedImage) -> Self {
-        Self::Memory(MemStream(image.0))
+        Self::Memory(MemStream(Bytes::from(image.0)))
     }
 }
 

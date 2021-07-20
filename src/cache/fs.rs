@@ -16,25 +16,22 @@
 
 use std::error::Error;
 use std::fmt::Display;
-use std::io::SeekFrom;
 use std::path::Path;
-use std::pin::Pin;
-use std::task::{Context, Poll};
+use tokio_stream::Stream;
+use tokio_uring::buf::IoBuf;
+use tokio_uring::buf::IoBufMut;
+use tokio_uring::buf::Slice;
+use tokio_uring::BufResult;
 
 use actix_web::error::PayloadError;
-use async_trait::async_trait;
-use bytes::Bytes;
 use chacha20::cipher::{NewCipher, StreamCipher};
 use chacha20::{Key, XChaCha20, XNonce};
 use futures::Future;
-use serde::Deserialize;
 use sodiumoxide::crypto::stream::xchacha20::{gen_nonce, NONCEBYTES};
-use tokio::fs::{create_dir_all, remove_file, File};
-use tokio::io::{
-    AsyncBufRead, AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, BufReader,
-    ReadBuf,
-};
+use tokio::fs::{create_dir_all, remove_file};
+use tokio::io::{AsyncBufRead, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, ReadBuf};
 use tokio::sync::mpsc::Sender;
+use tokio_uring::fs::File;
 use tokio_util::io::ReaderStream;
 use tracing::{debug, instrument, warn};
 
@@ -44,172 +41,113 @@ use super::{CacheEntry, CacheKey, CacheStream, ImageMetadata, ENCRYPTION_KEY};
 /// Attempts to lookup the file on disk, returning a byte stream if it exists.
 /// Note that this could return two types of streams, depending on if the file
 /// is in progress of being written to.
-#[instrument(level = "debug")]
+// #[instrument(level = "debug")]
 pub(super) async fn read_file(
     file: File,
-) -> Option<Result<(CacheStream, Option<XNonce>, ImageMetadata), std::io::Error>> {
-    let mut file_0 = file.try_clone().await.ok()?;
-    let file_1 = file.try_clone().await.ok()?;
-
+) -> Option<Result<(Reader, Option<XNonce>, ImageMetadata), std::io::Error>> {
     // Try reading decrypted header first...
-    let mut deserializer = serde_json::Deserializer::from_reader(file.into_std().await);
-    let mut maybe_metadata = ImageMetadata::deserialize(&mut deserializer);
+    let mut buf = vec![0; 128];
+    let res = file.read_at(buf, 0).await;
+    let maybe_n = res.0;
 
-    // Failed to parse normally, see if we have a legacy file format
-    if maybe_metadata.is_err() {
-        file_0.seek(SeekFrom::Start(2)).await.ok()?;
-        let mut deserializer = serde_json::Deserializer::from_reader(file_0.into_std().await);
-        maybe_metadata =
-            LegacyImageMetadata::deserialize(&mut deserializer).map(LegacyImageMetadata::into);
-    }
+    if let Ok(n) = maybe_n {
+        let buf = res.1;
+        let metadata_len = u16::from_le_bytes(*(buf.as_ptr() as *const [u8; 2]));
+        // metadata should be smaller than 128 bytes
+        assert!(n <= buf.len());
+        let maybe_data = if let Ok(data) = serde_json::from_slice::<ImageMetadata>(&buf[2..n]) {
+            Some(data)
+        } else {
+            serde_json::from_slice(&buf[2..n])
+                .map(LegacyImageMetadata::into)
+                .ok()
+        };
 
-    let parsed_metadata;
-    let mut maybe_header = None;
-    let mut reader: Option<Pin<Box<dyn MetadataFetch + Send + Sync>>> = None;
-    if let Ok(metadata) = maybe_metadata {
-        // image is decrypted
-        if ENCRYPTION_KEY.get().is_some() {
-            // invalidate cache since we're running in at-rest encryption and
-            // the file wasn't encrypted.
-            warn!("Found file but was not encrypted!");
-            return None;
-        }
-
-        reader = Some(Box::pin(BufReader::new(file_1)));
-        parsed_metadata = Some(metadata);
-        debug!("Found not encrypted file");
-    } else {
-        debug!("metadata read failed, trying to see if it's encrypted");
-        let mut file = file_1;
-        file.seek(SeekFrom::Start(0)).await.ok()?;
-
-        // image is encrypted or corrupt
-
-        // If the encryption key was set, use the encrypted disk reader instead;
-        // else, just directly read from file.
-        if let Some(key) = ENCRYPTION_KEY.get() {
-            let mut nonce_bytes = [0; NONCEBYTES];
-            if let Err(e) = file.read_exact(&mut nonce_bytes).await {
-                warn!("Found file but failed reading header: {}", e);
+        if let Some(data) = maybe_data {
+            if ENCRYPTION_KEY.get().is_some() {
+                // invalidate cache since we're running in at-rest encryption and
+                // the file wasn't encrypted.
+                warn!("Found file but was not encrypted!");
                 return None;
             }
 
-            debug!("header bytes: {:x?}", nonce_bytes);
-
-            maybe_header = Some(*XNonce::from_slice(&nonce_bytes));
-            reader = Some(Box::pin(BufReader::new(EncryptedReader::new(
-                file,
-                XNonce::from_slice(XNonce::from_slice(&nonce_bytes)),
-                key,
-            ))));
+            debug!("Found not encrypted file");
+            return Some(Ok((Reader::Raw(file), None, data)));
         }
+    }
 
-        parsed_metadata = if let Some(reader) = reader.as_mut() {
-            if let Ok(metadata) = reader.as_mut().metadata().await {
-                debug!("Successfully parsed encrypted metadata");
-                Some(metadata)
-            } else {
-                debug!("Failed to parse encrypted metadata");
-                None
-            }
+    // image is encrypted or corrupt
+    debug!("metadata read failed, trying to see if it's encrypted");
+
+    let key = match ENCRYPTION_KEY.get() {
+        Some(key) => key,
+        None => {
+            warn!("Encryption is disabled!");
+            return None;
+        }
+    };
+
+    let nonce_bytes = match file.read_at(vec![0; NONCEBYTES], 0).await {
+        (Ok(n), bytes) => {
+            assert_eq!(n, NONCEBYTES);
+            bytes
+        }
+        (Err(e), _) => {
+            warn!("Found file but failed reading header: {}", e);
+            return None;
+        }
+    };
+
+    debug!("header bytes: {:x?}", nonce_bytes);
+
+    let maybe_header = *XNonce::from_slice(&nonce_bytes);
+    let mut reader = EncryptedReader::new(file, XNonce::from_slice(&nonce_bytes), key);
+
+    let parsed_metadata = {
+        if let Ok(metadata) = reader.metadata().await {
+            debug!("Successfully parsed encrypted metadata");
+            Some(metadata)
         } else {
-            debug!("Failed to read encrypted data");
+            debug!("Failed to parse encrypted metadata");
             None
-        };
-    }
+        }
+    };
 
-    // parsed_metadata is either set or unset here. If it's set then we
-    // successfully decoded the data; otherwise the file is garbage.
+    parsed_metadata.map(|metadata| Ok((Reader::Encrypted(reader), Some(maybe_header), metadata)))
+}
 
-    if let Some(reader) = reader {
-        let stream = CacheStream::Completed(ReaderStream::new(reader));
-        parsed_metadata.map(|metadata| Ok((stream, maybe_header, metadata)))
-    } else {
-        debug!("Reader was invalid, file is corrupt");
-        None
+enum Reader {
+    Encrypted(EncryptedReader),
+    Raw(File),
+}
+
+impl Stream for Reader {
+    type Item = ();
+    fn poll_next(
+        self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::option::Option<<Self as futures::Stream>::Item>> {
+        todo!()
     }
 }
 
-struct EncryptedReader<R> {
-    file: Pin<Box<R>>,
+struct EncryptedReader {
+    file: File,
     keystream: XChaCha20,
+    buffer: Box<[u8; 4096]>,
 }
 
-impl<R> EncryptedReader<R> {
-    fn new(file: R, nonce: &XNonce, key: &Key) -> Self {
+impl EncryptedReader {
+    fn new(file: File, nonce: &XNonce, key: &Key) -> Self {
         Self {
-            file: Box::pin(file),
+            file,
             keystream: XChaCha20::new(key, nonce),
+            buffer: Box::new([0; 4096]),
         }
     }
-}
 
-impl<R: AsyncRead> AsyncRead for EncryptedReader<R> {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<std::io::Result<()>> {
-        let mut pinned = self.as_mut();
-        let previously_read = buf.filled().len();
-        let res = pinned.file.as_mut().poll_read(cx, buf);
-        let bytes_modified = buf.filled().len() - previously_read;
-        pinned.keystream.apply_keystream(
-            &mut buf.filled_mut()[previously_read..previously_read + bytes_modified],
-        );
-        res
-    }
-}
-
-#[async_trait]
-pub trait MetadataFetch: AsyncBufRead {
-    async fn metadata(mut self: Pin<&mut Self>) -> Result<ImageMetadata, ()>;
-}
-
-#[async_trait]
-impl<R: AsyncBufRead + Send> MetadataFetch for R {
-    #[inline]
-    async fn metadata(mut self: Pin<&mut Self>) -> Result<ImageMetadata, ()> {
-        MetadataFuture(self).await
-    }
-}
-
-struct MetadataFuture<'a, R>(Pin<&'a mut R>);
-
-impl<'a, R: AsyncBufRead> Future for MetadataFuture<'a, R> {
-    type Output = Result<ImageMetadata, ()>;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut filled = 0;
-        let mut pinned = self.0.as_mut();
-
-        loop {
-            let buf = match pinned.as_mut().poll_fill_buf(cx) {
-                Poll::Ready(Ok(buffer)) => buffer,
-                Poll::Ready(Err(_)) => return Poll::Ready(Err(())),
-                Poll::Pending => return Poll::Pending,
-            };
-
-            if filled == buf.len() {
-                return Poll::Ready(Err(()));
-            }
-
-            filled = buf.len();
-
-            let mut reader = serde_json::Deserializer::from_slice(buf).into_iter();
-            let (res, bytes_consumed) = match reader.next() {
-                Some(Ok(metadata)) => (Poll::Ready(Ok(metadata)), reader.byte_offset()),
-                Some(Err(e)) if e.is_eof() => continue,
-                Some(Err(_)) | None => return Poll::Ready(Err(())),
-            };
-
-            assert_ne!(bytes_consumed, 0);
-
-            // This needs to be outside the loop because we need to drop the
-            // reader ref, since that depends on a mut self.
-            pinned.as_mut().consume(bytes_consumed);
-            return res;
-        }
+    async fn metadata(&mut self) -> Result<ImageMetadata, Box<dyn std::error::Error>> {
+        todo!()
     }
 }
 
@@ -220,41 +158,55 @@ impl<'a, R: AsyncBufRead> Future for MetadataFuture<'a, R> {
 pub(super) async fn write_file<Fut, DbCallback>(
     path: &Path,
     key: CacheKey,
-    data: Bytes,
+    mut data: Vec<u8>,
     metadata: ImageMetadata,
     db_callback: DbCallback,
     on_complete: Option<Sender<CacheEntry>>,
 ) -> Result<(), std::io::Error>
 where
-    Fut: 'static + Send + Sync + Future<Output = ()>,
-    DbCallback: 'static + Send + Sync + FnOnce(u64) -> Fut,
+    Fut: 'static + Send + Future<Output = ()>,
+    DbCallback: 'static + Send + FnOnce(u64) -> Fut,
 {
-    let mut file = {
+    let file = {
         let parent = path.parent().expect("The path to have a parent");
         create_dir_all(parent).await?;
         let file = File::create(path).await?; // we need to make sure the file exists and is truncated.
         file
     };
 
-    let mut writer: Pin<Box<dyn AsyncWrite + Send>> = if let Some(key) = ENCRYPTION_KEY.get() {
+    let mut writer: WriterType = if let Some(key) = ENCRYPTION_KEY.get() {
         let nonce = gen_nonce();
-        file.write_all(nonce.as_ref()).await?;
-        Box::pin(EncryptedDiskWriter::new(
-            file,
-            XNonce::from_slice(nonce.as_ref()),
-            key,
-        ))
+        let mut buf: Slice<_> = nonce.as_ref().to_vec().slice(..);
+        let mut index: usize = 0;
+
+        loop {
+            match file.write_at(buf, index as u64).await {
+                (Ok(0), buf) => break,
+                (Ok(n), remaining) => {
+                    index = n;
+                    buf = remaining.into_inner().slice(index..);
+                }
+                (e, _) => return e.map(|_| ()),
+            }
+        }
+
+        WriterType::Encrypted(
+            EncryptedDiskWriter::new(file, XNonce::from_slice(nonce.as_ref()), key),
+            0,
+        )
     } else {
-        Box::pin(file)
+        WriterType::Raw(file, 0)
     };
 
     let metadata_string = serde_json::to_string(&metadata).expect("serialization to work");
     let metadata_size = metadata_string.len();
 
-    let mut error = writer.write_all(metadata_string.as_bytes()).await.err();
+    let mut error = writer.write_all(metadata_string.into_bytes()).await.0.err();
     if error.is_none() {
         debug!("decrypted write {:x?}", &data[..40]);
-        error = writer.write_all(&data).await.err();
+        let res = writer.write_all(data).await;
+        error = res.0.err();
+        data = res.1;
     }
 
     if let Some(e) = error {
@@ -266,7 +218,7 @@ where
         return Err(e);
     }
 
-    writer.flush().await?;
+    writer.sync_and_close().await?;
     debug!("writing to file done");
 
     let on_disk_size = (metadata_size + data.len()) as u64;
@@ -288,74 +240,83 @@ where
     Ok(())
 }
 
+enum WriterType {
+    Encrypted(EncryptedDiskWriter, u64),
+    Raw(File, u64),
+}
+
+impl WriterType {
+    async fn write_all<T: IoBufMut>(&mut self, data: T) -> BufResult<usize, T> {
+        match self {
+            Self::Encrypted(writer, pos) => {
+                // todo: encrypt
+                let mut data = data.slice(..);
+                loop {
+                    match writer.write_at(data, *pos).await {
+                        (Ok(0), buf) => break,
+                        (Ok(n), buf) => {
+                            *pos = n as u64;
+                            data = buf.into_inner().slice(n..);
+                        }
+                        _ => todo!(),
+                    }
+                }
+            }
+            Self::Raw(writer, pos) => {
+                let mut data = data.slice(..);
+                loop {
+                    match writer.write_at(data, *pos).await {
+                        (Ok(0), buf) => break,
+                        (Ok(n), buf) => {
+                            *pos = n as u64;
+                            data = buf.into_inner().slice(n..);
+                        }
+                        _ => todo!(),
+                    }
+                }
+            }
+        }
+
+        todo!()
+    }
+
+    async fn sync_and_close(self) -> std::io::Result<()> {
+        match self {
+            Self::Encrypted(writer, _) => {
+                writer.sync_all().await?;
+                writer.close().await
+            }
+            Self::Raw(writer, _) => {
+                writer.sync_all().await?;
+                writer.close().await
+            }
+        }
+    }
+}
+
 struct EncryptedDiskWriter {
-    file: Pin<Box<File>>,
+    file: File,
     keystream: XChaCha20,
-    buffer: Vec<u8>,
 }
 
 impl EncryptedDiskWriter {
     fn new(file: File, nonce: &XNonce, key: &Key) -> Self {
         Self {
-            file: Box::pin(file),
+            file,
             keystream: XChaCha20::new(key, nonce),
-            buffer: vec![],
-        }
-    }
-}
-
-impl AsyncWrite for EncryptedDiskWriter {
-    #[inline]
-    fn poll_write(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<Result<usize, std::io::Error>> {
-        let pinned = Pin::into_inner(self);
-
-        let old_buffer_size = pinned.buffer.len();
-        pinned.buffer.extend_from_slice(buf);
-        pinned
-            .keystream
-            .apply_keystream(&mut pinned.buffer[old_buffer_size..]);
-        match pinned.file.as_mut().poll_write(cx, &pinned.buffer) {
-            Poll::Ready(Ok(n)) => {
-                pinned.buffer.drain(..n);
-                Poll::Ready(Ok(buf.len()))
-            }
-            Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
-            // We have written the data to our buffer, even if we haven't
-            // couldn't write the file to disk.
-            Poll::Pending => Poll::Ready(Ok(buf.len())),
         }
     }
 
-    #[inline]
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), std::io::Error>> {
-        let pinned = Pin::into_inner(self);
-
-        while !pinned.buffer.is_empty() {
-            match pinned.file.as_mut().poll_write(cx, &pinned.buffer) {
-                Poll::Ready(Ok(n)) => {
-                    pinned.buffer.drain(..n);
-                }
-                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
-                Poll::Pending => return Poll::Pending,
-            }
-        }
-
-        pinned.file.as_mut().poll_flush(cx)
+    async fn write_at<T: IoBuf>(&self, data: T, pos: u64) -> BufResult<usize, T> {
+        self.file.write_at(data, pos).await
     }
 
-    #[inline]
-    fn poll_shutdown(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Result<(), std::io::Error>> {
-        match self.as_mut().poll_flush(cx) {
-            Poll::Ready(Ok(())) => self.as_mut().file.as_mut().poll_shutdown(cx),
-            poll => poll,
-        }
+    async fn sync_all(&self) -> std::io::Result<()> {
+        self.file.sync_all().await
+    }
+
+    async fn close(self) -> std::io::Result<()> {
+        self.file.close().await
     }
 }
 
@@ -430,10 +391,10 @@ mod read_file_compat {
     use futures::StreamExt;
     use std::io::{Seek, SeekFrom, Write};
     use tempfile::tempfile;
-    use tokio::fs::File;
+    use tokio_uring::fs::File;
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
+    #[cfg_attr(any(target = "unix", miri), ignore)]
     async fn can_read_legacy() {
         let mut temp_file = tempfile().unwrap();
         temp_file
@@ -442,6 +403,8 @@ mod read_file_compat {
             )
             .unwrap();
         temp_file.seek(SeekFrom::Start(0)).unwrap();
+
+        let fd = temp_file.as_raw_fd();
         let temp_file = File::from_std(temp_file);
 
         let (inner_stream, maybe_header, metadata) = read_file(temp_file).await.unwrap().unwrap();

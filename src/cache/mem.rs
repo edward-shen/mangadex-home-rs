@@ -18,14 +18,14 @@ use tracing::warn;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct CacheValue {
-    data: Bytes,
+    data: Vec<u8>,
     metadata: ImageMetadata,
     on_disk_size: u64,
 }
 
 impl CacheValue {
     #[inline]
-    fn new(data: Bytes, metadata: ImageMetadata, on_disk_size: u64) -> Self {
+    fn new(data: Vec<u8>, metadata: ImageMetadata, on_disk_size: u64) -> Self {
         Self {
             data,
             metadata,
@@ -284,7 +284,7 @@ where
             Some(mut mem_cache) => {
                 match mem_cache.get(key).map(Cow::into_owned).map(
                     |CacheValue { data, metadata, .. }| {
-                        Ok((CacheStream::Memory(MemStream(data)), metadata))
+                        Ok((CacheStream::Memory(MemStream(Bytes::from(data))), metadata))
                     },
                 ) {
                     Some(v) => Some(v),
@@ -299,7 +299,7 @@ where
     async fn put(
         &self,
         key: CacheKey,
-        image: Bytes,
+        image: Vec<u8>,
         metadata: ImageMetadata,
     ) -> Result<(), super::CacheError> {
         self.inner

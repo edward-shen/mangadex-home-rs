@@ -22,6 +22,7 @@ debug = 1
 
 [dependencies]
 actix-web = { version = "4.0.0-beta.4", features = [ "rustls" ] }
+actix-rt = "2"
 arc-swap = "1"
 async-trait = "0.1"
 base64 = "0.13"
@@ -55,6 +56,7 @@ tar = "0.4"
 thiserror = "1"
 tokio = { version = "1", features = [ "rt-multi-thread", "macros", "fs", "time", "sync", "parking_lot" ] }
 tokio-stream = { version = "0.1", features = [ "sync" ] }
+tokio-uring = "0.1.0"
 tokio-util = { version = "0.6", features = [ "codec" ] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.2", features = [ "parking_lot" ] }

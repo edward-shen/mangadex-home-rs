@@ -176,7 +176,7 @@ impl CachingClient {
                         ImageMetadata::new(content_type.clone(), length.clone(), last_mod.clone())
                             .unwrap();
 
-                    match cache.put(key, body.clone(), metadata).await {
+                    match cache.put(key, body.to_vec(), metadata).await {
                         Ok(()) => {
                             debug!("Done putting into cache");
 

@@ -1065,6 +1065,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "io-uring"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fb82832e05cc4ca298f198a8db108837b4f7b7b1248e3cba8e48f151aece80cf"
+dependencies = [
+ "bitflags",
+ "libc",
+]
+
+[[package]]
 name = "iovec"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1243,6 +1253,7 @@ dependencies = [
 name = "mangadex-home"
 version = "0.5.3"
 dependencies = [
+ "actix-rt",
  "actix-web",
  "arc-swap",
  "async-trait",
@@ -1278,6 +1289,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-stream",
+ "tokio-uring",
  "tokio-util",
  "tracing",
  "tracing-subscriber",
@@ -1850,6 +1862,12 @@ checksum = "93fc1dc3aaa9bfed95e02e6eadabb4baf7e3078b0bd1b4d7b6b0b68378900502"
 dependencies = [
  "winapi-util",
 ]
+
+[[package]]
+name = "scoped-tls"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ea6a9290e3c9cf0f18145ef7ffa62d68ee0bf5fcd651017e586dc7fd5da448c2"
 
 [[package]]
 name = "scopeguard"
@@ -2494,6 +2512,19 @@ dependencies = [
  "pin-project-lite",
  "tokio",
  "tokio-util",
+]
+
+[[package]]
+name = "tokio-uring"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09f54af096a39b937631659f1a5da60ab7c1af334025c33b87ed913072c3c8a9"
+dependencies = [
+ "io-uring",
+ "libc",
+ "scoped-tls",
+ "slab",
+ "tokio",
 ]
 
 [[package]]

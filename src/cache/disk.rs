@@ -16,10 +16,11 @@ use md5::{Digest, Md5};
 use sodiumoxide::hex;
 use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::{ConnectOptions, Sqlite, SqlitePool, Transaction};
-use tokio::fs::{create_dir_all, remove_file, rename, File};
+use tokio::fs::{create_dir_all, remove_file, rename};
 use tokio::join;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio_stream::wrappers::ReceiverStream;
+use tokio_uring::fs::File;
 use tracing::{debug, error, info, instrument, warn};
 
 use crate::units::Bytes;
@@ -348,24 +349,23 @@ impl Cache for DiskCache {
                 _ => return None,
             }
         } else {
-            File::open(path.as_path())
-                .await
-                .ok()
-                .map(|file| (file, path))
+            let file = File::open(path.as_path()).await;
+            file.ok().map(|file| (file, path))
         }?;
 
         tokio::spawn(async move { channel.send(DbMessage::Get(path)).await });
 
-        super::fs::read_file(file).await.map(|res| {
-            res.map(|(stream, _, metadata)| (stream, metadata))
-                .map_err(|_| CacheError::DecryptionFailure)
-        })
+        todo!();
+        // super::fs::read_file(file).await.map(|res| {
+        //     res.map(|(stream, _, metadata)| (stream, metadata))
+        //         .map_err(|_| CacheError::DecryptionFailure)
+        // })
     }
 
     async fn put(
         &self,
         key: CacheKey,
-        image: bytes::Bytes,
+        image: Vec<u8>,
         metadata: ImageMetadata,
     ) -> Result<(), CacheError> {
         let channel = self.db_update_channel_sender.clone();
@@ -388,7 +388,7 @@ impl CallbackCache for DiskCache {
     async fn put_with_on_completed_callback(
         &self,
         key: CacheKey,
-        image: bytes::Bytes,
+        image: Vec<u8>,
         metadata: ImageMetadata,
         on_complete: Sender<CacheEntry>,
     ) -> Result<(), CacheError> {
