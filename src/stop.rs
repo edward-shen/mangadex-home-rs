@@ -1,3 +1,5 @@
+#![cfg(not(tarpaulin_include))]
+
 use reqwest::StatusCode;
 use serde::Serialize;
 use tracing::{info, warn};

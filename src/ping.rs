@@ -162,6 +162,7 @@ impl<'de> Deserialize<'de> for Tls {
     }
 }
 
+#[cfg(not(tarpaulin_include))]
 impl std::fmt::Debug for Tls {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Tls")

@@ -229,6 +229,7 @@ pub trait CallbackCache: Cache {
 #[async_trait]
 impl<T: CallbackCache> CallbackCache for Arc<T> {
     #[inline]
+    #[cfg(not(tarpaulin_include))]
     async fn put_with_on_completed_callback(
         &self,
         key: CacheKey,

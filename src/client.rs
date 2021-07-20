@@ -45,6 +45,7 @@ pub static HTTP_CLIENT: Lazy<CachingClient> = Lazy::new(|| {
     }
 });
 
+#[cfg(not(tarpaulin_include))]
 pub static DEFAULT_HEADERS: Lazy<HeaderMap> = Lazy::new(|| {
     let mut headers = HeaderMap::with_capacity(8);
     headers.insert(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));

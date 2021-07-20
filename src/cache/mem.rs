@@ -86,6 +86,7 @@ pub trait InternalMemoryCache: Sync + Send {
     fn pop(&mut self) -> Option<(CacheKey, CacheValue)>;
 }
 
+#[cfg(not(tarpaulin_include))]
 impl InternalMemoryCacheInitializer for Lfu {
     #[inline]
     fn new() -> Self {
@@ -93,6 +94,7 @@ impl InternalMemoryCacheInitializer for Lfu {
     }
 }
 
+#[cfg(not(tarpaulin_include))]
 impl InternalMemoryCache for Lfu {
     #[inline]
     fn get(&mut self, key: &CacheKey) -> Option<Cow<CacheValue>> {
@@ -110,6 +112,7 @@ impl InternalMemoryCache for Lfu {
     }
 }
 
+#[cfg(not(tarpaulin_include))]
 impl InternalMemoryCacheInitializer for Lru {
     #[inline]
     fn new() -> Self {
@@ -117,6 +120,7 @@ impl InternalMemoryCacheInitializer for Lru {
     }
 }
 
+#[cfg(not(tarpaulin_include))]
 impl InternalMemoryCache for Lru {
     #[inline]
     fn get(&mut self, key: &CacheKey) -> Option<Cow<CacheValue>> {
@@ -134,6 +138,7 @@ impl InternalMemoryCache for Lru {
     }
 }
 
+#[cfg(not(tarpaulin_include))]
 impl InternalMemoryCache for RedisClient {
     fn get(&mut self, key: &CacheKey) -> Option<Cow<CacheValue>> {
         Commands::get(self, key).ok().map(Cow::Owned)

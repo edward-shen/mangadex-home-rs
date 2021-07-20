@@ -1,3 +1,5 @@
+#![cfg(not(tarpaulin_include))]
+
 use std::fs::metadata;
 use std::hint::unreachable_unchecked;
 use std::time::SystemTime;

@@ -42,7 +42,6 @@ mod metrics;
 mod ping;
 mod routes;
 mod state;
-#[cfg(not(tarpaulin_include))]
 mod stop;
 mod units;
 
@@ -252,6 +251,7 @@ enum InvalidCombination {
     MissingUnstableOption(&'static str, UnstableOptions),
 }
 
+#[cfg(not(tarpaulin_include))]
 impl Display for InvalidCombination {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -268,6 +268,7 @@ impl Display for InvalidCombination {
 
 impl Error for InvalidCombination {}
 
+#[cfg(not(tarpaulin_include))]
 fn print_preamble_and_warnings(args: &Config) -> Result<(), Box<dyn Error>> {
     let build_string = option_env!("VERGEN_GIT_SHA_SHORT")
         .map(|git_sha| format!(" ({})", git_sha))
