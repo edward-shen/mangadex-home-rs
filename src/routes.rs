@@ -130,8 +130,8 @@ pub async fn metrics() -> impl Responder {
     let mut buffer = Vec::new();
     TextEncoder::new()
         .encode(&metric_families, &mut buffer)
-        .unwrap();
-    String::from_utf8(buffer).unwrap()
+        .expect("Should never have an io error writing to a vec");
+    String::from_utf8(buffer).expect("Text encoder should render valid utf-8")
 }
 
 #[derive(Error, Debug, PartialEq, Eq)]
