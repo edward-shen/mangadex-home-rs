@@ -87,7 +87,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Logging and warnings
     //
 
-    // SimpleLogger::new().with_level(config.log_level).init()?;
     tracing_subscriber::fmt()
         .with_max_level(config.log_level)
         .init();
@@ -120,6 +119,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 
     // HTTP Server init
+
+    // Try bind to provided port first
+    let port_reservation = std::net::TcpListener::bind(bind_address);
+    if let Err(e) = port_reservation {
+        error!("Failed to bind to port!");
+        return Err(e.into());
+    };
 
     let server = if OFFLINE_MODE.load(Ordering::Acquire) {
         ServerState::init_offline()
@@ -224,6 +230,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .app_data(Data::from(Arc::clone(&cache_0)))
     })
     .shutdown_timeout(60);
+
+    // drop port reservation, might have a TOCTOU but it's not a big deal; this
+    // is just a best effort.
+    std::mem::drop(port_reservation);
 
     if disable_tls {
         server.bind(bind_address)?.run().await?;
