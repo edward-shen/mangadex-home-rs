@@ -1,3 +1,4 @@
+use std::hint::unreachable_unchecked;
 use std::sync::atomic::Ordering;
 
 use actix_web::error::ErrorNotFound;
@@ -133,14 +134,12 @@ pub async fn metrics() -> impl Responder {
     String::from_utf8(buffer).unwrap()
 }
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, PartialEq, Eq)]
 pub enum TokenValidationError {
     #[error("Failed to decode base64 token.")]
     DecodeError(#[from] DecodeError),
     #[error("Nonce was too short.")]
     IncompleteNonce,
-    #[error("Invalid nonce.")]
-    InvalidNonce,
     #[error("Decryption failed")]
     DecryptionFailure,
     #[error("The token format was invalid.")]
@@ -178,7 +177,11 @@ fn validate_token(
 
     let (nonce, encrypted) = data.split_at(NONCEBYTES);
 
-    let nonce = Nonce::from_slice(nonce).ok_or(TokenValidationError::InvalidNonce)?;
+    let nonce = match Nonce::from_slice(nonce) {
+        Some(nonce) => nonce,
+        // We split at NONCEBYTES, so this should never happen.
+        None => unsafe { unreachable_unchecked() },
+    };
     let decrypted = open_precomputed(encrypted, &nonce, precomputed_key)
         .map_err(|_| TokenValidationError::DecryptionFailure)?;
 
@@ -288,4 +291,157 @@ pub fn construct_response(
     *ret.headers_mut() = headers;
 
     ServerResponse::HttpResponse(ret)
+}
+
+#[cfg(test)]
+mod token_validation {
+    use super::*;
+    use sodiumoxide::crypto::box_::precompute;
+    use sodiumoxide::crypto::box_::seal_precomputed;
+    use sodiumoxide::crypto::box_::{gen_keypair, gen_nonce, PRECOMPUTEDKEYBYTES};
+
+    #[test]
+    fn invalid_base64() {
+        let res = validate_token(
+            &PrecomputedKey::from_slice(&b"1".repeat(PRECOMPUTEDKEYBYTES))
+                .expect("valid test token"),
+            "a".to_string(),
+            "b",
+        );
+
+        assert_eq!(
+            res,
+            Err(TokenValidationError::DecodeError(
+                DecodeError::InvalidLength
+            ))
+        );
+    }
+
+    #[test]
+    fn not_long_enough_for_nonce() {
+        let res = validate_token(
+            &PrecomputedKey::from_slice(&b"1".repeat(PRECOMPUTEDKEYBYTES))
+                .expect("valid test token"),
+            "aGVsbG8gaW50ZXJuZXR-Cg==".to_string(),
+            "b",
+        );
+
+        assert_eq!(res, Err(TokenValidationError::IncompleteNonce));
+    }
+
+    #[test]
+    fn invalid_precomputed_key() {
+        let precomputed_1 = {
+            let (pk, sk) = gen_keypair();
+            precompute(&pk, &sk)
+        };
+        let precomputed_2 = {
+            let (pk, sk) = gen_keypair();
+            precompute(&pk, &sk)
+        };
+        let nonce = gen_nonce();
+
+        // Seal with precomputed_2, open with precomputed_1
+
+        let data = seal_precomputed(b"hello world", &nonce, &precomputed_2);
+        let data: Vec<u8> = nonce.as_ref().into_iter().copied().chain(data).collect();
+        let data = base64::encode_config(data, BASE64_CONFIG);
+
+        let res = validate_token(&precomputed_1, data, "b");
+        assert_eq!(res, Err(TokenValidationError::DecryptionFailure));
+    }
+
+    #[test]
+    fn invalid_token_data() {
+        let precomputed = {
+            let (pk, sk) = gen_keypair();
+            precompute(&pk, &sk)
+        };
+        let nonce = gen_nonce();
+
+        let data = seal_precomputed(b"hello world", &nonce, &precomputed);
+        let data: Vec<u8> = nonce.as_ref().into_iter().copied().chain(data).collect();
+        let data = base64::encode_config(data, BASE64_CONFIG);
+
+        let res = validate_token(&precomputed, data, "b");
+        assert_eq!(res, Err(TokenValidationError::InvalidToken));
+    }
+
+    #[test]
+    fn token_must_have_valid_expiration() {
+        let precomputed = {
+            let (pk, sk) = gen_keypair();
+            precompute(&pk, &sk)
+        };
+        let nonce = gen_nonce();
+
+        let time = Utc::now() - chrono::Duration::weeks(1);
+        let data = seal_precomputed(
+            serde_json::json!({
+                "expires": time.to_rfc3339(),
+                "hash": "b",
+            })
+            .to_string()
+            .as_bytes(),
+            &nonce,
+            &precomputed,
+        );
+        let data: Vec<u8> = nonce.as_ref().into_iter().copied().chain(data).collect();
+        let data = base64::encode_config(data, BASE64_CONFIG);
+
+        let res = validate_token(&precomputed, data, "b");
+        assert_eq!(res, Err(TokenValidationError::TokenExpired));
+    }
+
+    #[test]
+    fn token_must_have_valid_chapter_hash() {
+        let precomputed = {
+            let (pk, sk) = gen_keypair();
+            precompute(&pk, &sk)
+        };
+        let nonce = gen_nonce();
+
+        let time = Utc::now() + chrono::Duration::weeks(1);
+        let data = seal_precomputed(
+            serde_json::json!({
+                "expires": time.to_rfc3339(),
+                "hash": "b",
+            })
+            .to_string()
+            .as_bytes(),
+            &nonce,
+            &precomputed,
+        );
+        let data: Vec<u8> = nonce.as_ref().into_iter().copied().chain(data).collect();
+        let data = base64::encode_config(data, BASE64_CONFIG);
+
+        let res = validate_token(&precomputed, data, "");
+        assert_eq!(res, Err(TokenValidationError::InvalidChapterHash));
+    }
+
+    #[test]
+    fn valid_token_returns_ok() {
+        let precomputed = {
+            let (pk, sk) = gen_keypair();
+            precompute(&pk, &sk)
+        };
+        let nonce = gen_nonce();
+
+        let time = Utc::now() + chrono::Duration::weeks(1);
+        let data = seal_precomputed(
+            serde_json::json!({
+                "expires": time.to_rfc3339(),
+                "hash": "b",
+            })
+            .to_string()
+            .as_bytes(),
+            &nonce,
+            &precomputed,
+        );
+        let data: Vec<u8> = nonce.as_ref().into_iter().copied().chain(data).collect();
+        let data = base64::encode_config(data, BASE64_CONFIG);
+
+        let res = validate_token(&precomputed, data, "b");
+        assert!(res.is_ok());
+    }
 }
