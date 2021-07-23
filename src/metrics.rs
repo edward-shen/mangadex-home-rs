@@ -174,12 +174,9 @@ async fn fetch_db(license_key: ClientSecret) -> Result<(), DbLoadError> {
 }
 
 pub fn record_country_visit(country: Option<Country>) {
-    let iso_code = country.map_or("unknown", |country| {
-        country
-            .country
-            .and_then(|c| c.iso_code)
-            .unwrap_or("unknown")
-    });
+    let iso_code = country
+        .and_then(|country| country.country.and_then(|c| c.iso_code))
+        .unwrap_or("unknown");
 
     COUNTRY_VISIT_COUNTER
         .get_metric_with_label_values(&[iso_code])
