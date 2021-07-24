@@ -132,7 +132,7 @@ pub async fn load_geo_ip_data(license_key: ClientSecret) -> Result<(), DbLoadErr
     // Result literally cannot panic here, buuuuuut if it does we'll panic
     GEOIP_DATABASE
         .set(maxminddb::Reader::open_readfile(DB_PATH)?)
-        .map_err(|_| ())
+        .map_err(|_| ()) // Need to map err here or can't expect
         .expect("to set the geo ip db singleton");
 
     Ok(())
