@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use clap::{crate_authors, crate_description, crate_version, Clap};
+use clap::{crate_authors, crate_description, crate_version, Parser};
 use log::LevelFilter;
 use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
@@ -301,7 +301,7 @@ struct YamlExtendedOptions {
     redis_url: Option<Url>,
 }
 
-#[derive(Clap, Clone)]
+#[derive(Parser, Clone)]
 #[clap(version = crate_version!(), author = crate_authors!(), about = crate_description!())]
 struct CliArgs {
     /// The port to listen on.

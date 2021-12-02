@@ -22,7 +22,9 @@ use config::Config;
 use maxminddb::geoip2;
 use parking_lot::RwLock;
 use redis::Client as RedisClient;
-use rustls::{NoClientAuth, ServerConfig};
+
+use rustls::server::NoClientAuth;
+use rustls::ServerConfig;
 use sodiumoxide::crypto::stream::xchacha20::gen_key;
 use state::{RwLockServerState, ServerState};
 use stop::send_stop;
@@ -239,11 +241,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
         server.bind(bind_address)?.run().await?;
     } else {
         // Rustls only supports TLS 1.2 and 1.3.
-        let tls_config = {
-            let mut tls_config = ServerConfig::new(NoClientAuth::new());
-            tls_config.cert_resolver = Arc::new(DynamicServerCert);
-            tls_config
-        };
+        let tls_config = ServerConfig::builder()
+            .with_safe_defaults()
+            .with_client_cert_verifier(NoClientAuth::new())
+            .with_cert_resolver(Arc::new(DynamicServerCert));
 
         server.bind_rustls(bind_address, tls_config)?.run().await?;
     }

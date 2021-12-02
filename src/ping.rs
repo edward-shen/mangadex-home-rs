@@ -2,9 +2,9 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::Ordering;
 use std::{io::BufReader, sync::Arc};
 
-use rustls::internal::pemfile::{certs, rsa_private_keys};
-use rustls::sign::{RSASigningKey, SigningKey};
-use rustls::Certificate;
+use rustls::sign::{CertifiedKey, RsaSigningKey, SigningKey};
+use rustls::{Certificate, PrivateKey};
+use rustls_pemfile::{certs, rsa_private_keys};
 use serde::de::{MapAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use serde_repr::Deserialize_repr;
@@ -15,8 +15,8 @@ use url::Url;
 use crate::client::HTTP_CLIENT;
 use crate::config::{ClientSecret, Config};
 use crate::state::{
-    RwLockServerState, PREVIOUSLY_COMPROMISED, PREVIOUSLY_PAUSED, TLS_CERTS,
-    TLS_PREVIOUSLY_CREATED, TLS_SIGNING_KEY,
+    RwLockServerState, CERTIFIED_KEY, PREVIOUSLY_COMPROMISED, PREVIOUSLY_PAUSED,
+    TLS_PREVIOUSLY_CREATED,
 };
 use crate::units::{Bytes, BytesPerSecond, Port};
 use crate::CLIENT_API_VERSION;
@@ -104,7 +104,7 @@ pub enum ErrorCode {
 
 pub struct Tls {
     pub created_at: String,
-    pub priv_key: Arc<Box<dyn SigningKey>>,
+    pub priv_key: Arc<RsaSigningKey>,
     pub certs: Vec<Certificate>,
 }
 
@@ -137,7 +137,8 @@ impl<'de> Deserialize<'de> for Tls {
                             priv_key = rsa_private_keys(&mut BufReader::new(value.as_bytes()))
                                 .ok()
                                 .and_then(|mut v| {
-                                    v.pop().and_then(|key| RSASigningKey::new(&key).ok())
+                                    v.pop()
+                                        .and_then(|key| RsaSigningKey::new(&PrivateKey(key)).ok())
                                 });
                         }
                         "certificate" => {
@@ -150,8 +151,8 @@ impl<'de> Deserialize<'de> for Tls {
                 match (created_at, priv_key, certificates) {
                     (Some(created_at), Some(priv_key), Some(certificates)) => Ok(Tls {
                         created_at,
-                        priv_key: Arc::new(Box::new(priv_key)),
-                        certs: certificates,
+                        priv_key: Arc::new(priv_key),
+                        certs: certificates.into_iter().map(Certificate).collect(),
                     }),
                     _ => Err(serde::de::Error::custom("Could not deserialize tls info")),
                 }
@@ -213,8 +214,12 @@ pub async fn update_server_state(
                         .get()
                         .unwrap()
                         .swap(Arc::new(tls.created_at));
-                    TLS_SIGNING_KEY.get().unwrap().swap(tls.priv_key);
-                    TLS_CERTS.get().unwrap().swap(Arc::new(tls.certs));
+                    CERTIFIED_KEY.store(Some(Arc::new(CertifiedKey {
+                        cert: tls.certs.clone(),
+                        key: Arc::clone(&tls.priv_key) as Arc<dyn SigningKey>,
+                        ocsp: None,
+                        sct_list: None,
+                    })));
                 }
 
                 let previously_compromised = PREVIOUSLY_COMPROMISED.load(Ordering::Acquire);
