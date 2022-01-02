@@ -1249,7 +1249,7 @@ dependencies = [
 
 [[package]]
 name = "mangadex-home"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "actix-web",
  "arc-swap",
