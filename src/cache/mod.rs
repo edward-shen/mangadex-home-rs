@@ -5,7 +5,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
-use actix_web::http::HeaderValue;
+use actix_web::http::header::HeaderValue;
 use async_trait::async_trait;
 use bytes::Bytes;
 use chacha20::Key;

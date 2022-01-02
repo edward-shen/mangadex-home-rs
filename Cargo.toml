@@ -21,7 +21,8 @@ codegen-units = 1
 debug = 1
 
 [dependencies]
-actix-web = { version = "4.0.0-beta.8", features = [ "rustls" ] }
+# Pin because we're using unstable versions
+actix-web = { version = "=4.0.0-beta.18", features = [ "rustls" ] }
 arc-swap = "1"
 async-trait = "0.1"
 base64 = "0.13"
@@ -29,7 +30,7 @@ bincode = "1"
 bytes = { version = "1", features = [ "serde" ] }
 chacha20 = "0.7"
 chrono = { version = "0.4", features = [ "serde" ] }
-clap = { version = "3.0.0-beta.4", features = [ "wrap_help" ] }
+clap = { version = "3", features = [ "wrap_help", "derive", "cargo" ] }
 ctrlc = "3"
 dotenv = "0.15"
 flate2 = { version = "1", features = [ "tokio" ] }

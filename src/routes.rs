@@ -1,9 +1,9 @@
 use std::hint::unreachable_unchecked;
 use std::sync::atomic::Ordering;
 
+use actix_web::body::BoxBody;
 use actix_web::error::ErrorNotFound;
-use actix_web::http::header::{CONTENT_LENGTH, CONTENT_TYPE, LAST_MODIFIED};
-use actix_web::http::HeaderValue;
+use actix_web::http::header::{CONTENT_LENGTH, CONTENT_TYPE, LAST_MODIFIED, HeaderValue};
 use actix_web::web::Path;
 use actix_web::HttpResponseBuilder;
 use actix_web::{get, web::Data, HttpRequest, HttpResponse, Responder};
@@ -34,6 +34,8 @@ pub enum ServerResponse {
 }
 
 impl Responder for ServerResponse {
+    type Body = BoxBody;
+
     #[inline]
     fn respond_to(self, req: &HttpRequest) -> HttpResponse {
         match self {
@@ -151,6 +153,8 @@ pub enum TokenValidationError {
 }
 
 impl Responder for TokenValidationError {
+    type Body = BoxBody;
+
     #[inline]
     fn respond_to(self, _: &HttpRequest) -> HttpResponse {
         let mut resp = HttpResponse::Forbidden().finish();

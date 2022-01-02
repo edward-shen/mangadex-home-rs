@@ -3,7 +3,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 
-use actix_web::http::{HeaderMap, HeaderName, HeaderValue};
+use actix_web::http::header::{HeaderMap, HeaderName, HeaderValue};
 use actix_web::web::Data;
 use bytes::Bytes;
 use once_cell::sync::Lazy;
