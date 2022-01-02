@@ -64,15 +64,16 @@ impl ServerState {
                         .token_key
                         .ok_or(ServerInitError::MissingTokenKey)
                         .and_then(|key| {
-                            if let Some(key) = base64::decode(&key)
+                            base64::decode(&key)
                                 .ok()
                                 .and_then(|k| PrecomputedKey::from_slice(&k))
-                            {
-                                Ok(key)
-                            } else {
-                                error!("Failed to parse token key: got {}", key);
-                                Err(ServerInitError::KeyParseError(key))
-                            }
+                                .map_or_else(
+                                    || {
+                                        error!("Failed to parse token key: got {}", key);
+                                        Err(ServerInitError::KeyParseError(key))
+                                    },
+                                    Ok,
+                                )
                         })?;
 
                     PREVIOUSLY_COMPROMISED.store(resp.compromised, Ordering::Release);

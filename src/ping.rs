@@ -73,7 +73,7 @@ impl<'a> From<(&'a ClientSecret, &Config)> for Request<'a> {
 #[derive(Deserialize, Debug)]
 #[serde(untagged)]
 pub enum Response {
-    Ok(OkResponse),
+    Ok(Box<OkResponse>),
     Error(ErrorResponse),
 }
 

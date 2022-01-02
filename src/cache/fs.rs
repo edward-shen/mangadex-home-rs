@@ -121,13 +121,16 @@ pub(super) async fn read_file(
     // parsed_metadata is either set or unset here. If it's set then we
     // successfully decoded the data; otherwise the file is garbage.
 
-    if let Some(reader) = reader {
-        let stream = CacheStream::Completed(ReaderStream::new(reader));
-        parsed_metadata.map(|metadata| Ok((stream, maybe_header, metadata)))
-    } else {
-        debug!("Reader was invalid, file is corrupt");
-        None
-    }
+    reader.map_or_else(
+        || {
+            debug!("Reader was invalid, file is corrupt");
+            None
+        },
+        |reader| {
+            let stream = CacheStream::Completed(ReaderStream::new(reader));
+            parsed_metadata.map(|metadata| Ok((stream, maybe_header, metadata)))
+        },
+    )
 }
 
 struct EncryptedReader<R> {

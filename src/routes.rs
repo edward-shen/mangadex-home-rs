@@ -3,10 +3,10 @@ use std::sync::atomic::Ordering;
 
 use actix_web::body::BoxBody;
 use actix_web::error::ErrorNotFound;
-use actix_web::http::header::{CONTENT_LENGTH, CONTENT_TYPE, LAST_MODIFIED, HeaderValue};
-use actix_web::web::Path;
+use actix_web::http::header::{HeaderValue, CONTENT_LENGTH, CONTENT_TYPE, LAST_MODIFIED};
+use actix_web::web::{Data, Path};
 use actix_web::HttpResponseBuilder;
-use actix_web::{get, web::Data, HttpRequest, HttpResponse, Responder};
+use actix_web::{get, HttpRequest, HttpResponse, Responder};
 use base64::DecodeError;
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
