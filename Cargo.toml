@@ -22,7 +22,7 @@ debug = 1
 
 [dependencies]
 # Pin because we're using unstable versions
-actix-web = { version = "=4.0.0-beta.18", features = [ "rustls" ] }
+actix-web = { version = "4", features = [ "rustls" ] }
 arc-swap = "1"
 async-trait = "0.1"
 base64 = "0.13"
