@@ -462,7 +462,7 @@ mod remove_file_handler {
     use tempfile::tempdir;
     use tokio::fs::{create_dir_all, remove_dir_all};
 
-    use super::{File, remove_file_handler};
+    use super::{remove_file_handler, File};
 
     #[tokio::test]
     async fn should_not_panic_on_invalid_path() {
@@ -568,7 +568,7 @@ mod db {
     use sqlx::{Connection, Row, SqliteConnection};
     use std::error::Error;
 
-    use super::{Cache, ConnectOptions, DiskCache, FromStr, Ordering, PathBuf, StreamExt, handle_db_get, handle_db_put};
+    use super::{handle_db_get, handle_db_put, DiskCache, FromStr, Ordering, PathBuf, StreamExt};
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]

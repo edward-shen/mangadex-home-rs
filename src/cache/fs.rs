@@ -469,7 +469,10 @@ mod read_file_compat {
 mod metadata_future {
     use std::{collections::VecDeque, io::ErrorKind};
 
-    use super::{AsyncBufRead, AsyncRead, AsyncReadExt, BufReader, Context, Error, MetadataFuture, NewCipher, Pin, Poll, ReadBuf};
+    use super::{
+        AsyncBufRead, AsyncRead, AsyncReadExt, BufReader, Context, Error, MetadataFuture, Pin,
+        Poll, ReadBuf,
+    };
     use crate::cache::ImageContentType;
     use chrono::DateTime;
 
@@ -519,7 +522,6 @@ mod metadata_future {
             match pinned.fill_buf_events.pop_front() {
                 Some(Poll::Ready(Ok(bytes))) => {
                     pinned.buffer.extend_from_slice(bytes);
-                    String::from_utf8_lossy(&pinned.buffer);
                     return Poll::Ready(Ok(pinned.buffer.as_ref()));
                 }
                 Some(res @ Poll::Ready(_)) => res,
