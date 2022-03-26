@@ -89,7 +89,6 @@ impl ServerState {
                     if let Some(ref override_url) = config.override_upstream {
                         resp.image_server = override_url.clone();
                         warn!("Upstream URL overridden to: {}", resp.image_server);
-                    } else {
                     }
 
                     info!("This client's URL has been set to {}", resp.url);

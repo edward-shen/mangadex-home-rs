@@ -280,6 +280,7 @@ impl Display for InvalidCombination {
 impl Error for InvalidCombination {}
 
 #[cfg(not(tarpaulin_include))]
+#[allow(clippy::cognitive_complexity)]
 fn print_preamble_and_warnings(args: &Config) -> Result<(), Box<dyn Error>> {
     let build_string = option_env!("VERGEN_GIT_SHA_SHORT")
         .map(|git_sha| format!(" ({})", git_sha))

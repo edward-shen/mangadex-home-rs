@@ -469,7 +469,7 @@ mod read_file_compat {
 mod metadata_future {
     use std::{collections::VecDeque, io::ErrorKind};
 
-    use super::*;
+    use super::{AsyncBufRead, AsyncRead, AsyncReadExt, BufReader, Context, Error, MetadataFuture, NewCipher, Pin, Poll, ReadBuf};
     use crate::cache::ImageContentType;
     use chrono::DateTime;
 
@@ -550,7 +550,7 @@ mod metadata_future {
         })?;
 
         assert_eq!(metadata.content_type, Some(ImageContentType::Png));
-        assert_eq!(metadata.content_length, Some(708370));
+        assert_eq!(metadata.content_length, Some(708_370));
         assert_eq!(
             metadata.last_modified,
             Some(DateTime::parse_from_rfc3339("2021-04-13T04:37:41+00:00")?)
@@ -579,7 +579,7 @@ mod metadata_future {
         })?;
 
         assert_eq!(metadata.content_type, Some(ImageContentType::Png));
-        assert_eq!(metadata.content_length, Some(708370));
+        assert_eq!(metadata.content_length, Some(708_370));
         assert_eq!(
             metadata.last_modified,
             Some(DateTime::parse_from_rfc3339("2021-04-13T04:37:41+00:00")?)
@@ -611,7 +611,7 @@ mod metadata_future {
         })?;
 
         assert_eq!(metadata.content_type, Some(ImageContentType::Png));
-        assert_eq!(metadata.content_length, Some(708370));
+        assert_eq!(metadata.content_length, Some(708_370));
         assert_eq!(
             metadata.last_modified,
             Some(DateTime::parse_from_rfc3339("2021-04-13T04:37:41+00:00")?)

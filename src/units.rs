@@ -44,7 +44,7 @@ pub struct Mebibytes(usize);
 impl Mebibytes {
     #[cfg(test)]
     pub fn new(size: usize) -> Self {
-        Mebibytes(size)
+        Self(size)
     }
 }
 

@@ -199,14 +199,13 @@ pub async fn update_server_state(
                 }
 
                 if let Some(key) = resp.token_key {
-                    if let Some(key) = base64::decode(&key)
+                    base64::decode(&key)
                         .ok()
                         .and_then(|k| PrecomputedKey::from_slice(&k))
-                    {
-                        write_guard.precomputed_key = key;
-                    } else {
-                        error!("Failed to parse token key: got {}", key);
-                    }
+                        .map_or_else(
+                            || error!("Failed to parse token key: got {}", key),
+                            |key| write_guard.precomputed_key = key,
+                        );
                 }
 
                 if let Some(tls) = resp.tls {

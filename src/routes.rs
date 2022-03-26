@@ -299,7 +299,7 @@ pub fn construct_response(
 
 #[cfg(test)]
 mod token_validation {
-    use super::*;
+    use super::{BASE64_CONFIG, DecodeError, PrecomputedKey, TokenValidationError, Utc, validate_token};
     use sodiumoxide::crypto::box_::precompute;
     use sodiumoxide::crypto::box_::seal_precomputed;
     use sodiumoxide::crypto::box_::{gen_keypair, gen_nonce, PRECOMPUTEDKEYBYTES};
@@ -348,7 +348,7 @@ mod token_validation {
         // Seal with precomputed_2, open with precomputed_1
 
         let data = seal_precomputed(b"hello world", &nonce, &precomputed_2);
-        let data: Vec<u8> = nonce.as_ref().into_iter().copied().chain(data).collect();
+        let data: Vec<u8> = nonce.as_ref().iter().copied().chain(data).collect();
         let data = base64::encode_config(data, BASE64_CONFIG);
 
         let res = validate_token(&precomputed_1, data, "b");
@@ -364,7 +364,7 @@ mod token_validation {
         let nonce = gen_nonce();
 
         let data = seal_precomputed(b"hello world", &nonce, &precomputed);
-        let data: Vec<u8> = nonce.as_ref().into_iter().copied().chain(data).collect();
+        let data: Vec<u8> = nonce.as_ref().iter().copied().chain(data).collect();
         let data = base64::encode_config(data, BASE64_CONFIG);
 
         let res = validate_token(&precomputed, data, "b");
@@ -390,7 +390,7 @@ mod token_validation {
             &nonce,
             &precomputed,
         );
-        let data: Vec<u8> = nonce.as_ref().into_iter().copied().chain(data).collect();
+        let data: Vec<u8> = nonce.as_ref().iter().copied().chain(data).collect();
         let data = base64::encode_config(data, BASE64_CONFIG);
 
         let res = validate_token(&precomputed, data, "b");
@@ -416,7 +416,7 @@ mod token_validation {
             &nonce,
             &precomputed,
         );
-        let data: Vec<u8> = nonce.as_ref().into_iter().copied().chain(data).collect();
+        let data: Vec<u8> = nonce.as_ref().iter().copied().chain(data).collect();
         let data = base64::encode_config(data, BASE64_CONFIG);
 
         let res = validate_token(&precomputed, data, "");
@@ -442,7 +442,7 @@ mod token_validation {
             &nonce,
             &precomputed,
         );
-        let data: Vec<u8> = nonce.as_ref().into_iter().copied().chain(data).collect();
+        let data: Vec<u8> = nonce.as_ref().iter().copied().chain(data).collect();
         let data = base64::encode_config(data, BASE64_CONFIG);
 
         let res = validate_token(&precomputed, data, "b");

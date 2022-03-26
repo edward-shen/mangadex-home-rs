@@ -367,7 +367,7 @@ mod test_util {
             metadata: ImageMetadata,
             on_complete: Sender<CacheEntry>,
         ) -> Result<(), CacheError> {
-            self.put(key.clone(), data.clone(), metadata.clone())
+            self.put(key.clone(), data.clone(), metadata)
                 .await?;
             let on_disk_size = data.len() as u64;
             let _ = on_complete
@@ -438,7 +438,7 @@ mod cache_ops {
             last_modified: None,
         };
         let bytes = Bytes::from_static(b"abcd");
-        let value = CacheValue::new(bytes.clone(), metadata.clone(), 34);
+        let value = CacheValue::new(bytes.clone(), metadata, 34);
 
         // Populate the cache, need to drop the lock else it's considered locked
         // when we actually call the cache
@@ -478,7 +478,7 @@ mod cache_ops {
         {
             let cache = &mut cache.inner;
             cache
-                .put(key.clone(), bytes.clone(), metadata.clone())
+                .put(key.clone(), bytes.clone(), metadata)
                 .await?;
         }
 
@@ -511,7 +511,7 @@ mod cache_ops {
         {
             let cache = &mut cache.inner;
             cache
-                .put(key.clone(), bytes.clone(), metadata.clone())
+                .put(key.clone(), bytes.clone(), metadata)
                 .await?;
         }
 
@@ -557,7 +557,7 @@ mod cache_ops {
         let bytes_len = bytes.len() as u64;
 
         cache
-            .put(key.clone(), bytes.clone(), metadata.clone())
+            .put(key.clone(), bytes.clone(), metadata)
             .await?;
 
         // Because the callback is supposed to let the memory cache insert the
@@ -667,7 +667,7 @@ mod db_listener {
         };
         let bytes = Bytes::from_static(b"abcde");
 
-        cache.put(key_0, bytes.clone(), metadata.clone()).await?;
+        cache.put(key_0, bytes.clone(), metadata).await?;
         cache.put(key_1, bytes.clone(), metadata).await?;
 
         // let the listener run first
@@ -717,6 +717,6 @@ mod mem_threshold {
 
     #[test]
     fn large_amount_cannot_overflow() {
-        assert_eq!(mem_threshold(&Bytes(usize::MAX)), 17524406870024074020);
+        assert_eq!(mem_threshold(&Bytes(usize::MAX)), 17_524_406_870_024_074_020);
     }
 }

@@ -97,7 +97,7 @@ mod parse {
             metadata.content_type.map(|v| v.0),
             Some(ImageContentType::Jpeg)
         );
-        assert_eq!(metadata.size, Some(117888));
+        assert_eq!(metadata.size, Some(117_888));
         assert_eq!(
             metadata.last_modified.map(|v| v.0),
             Some(DateTime::parse_from_rfc2822(
